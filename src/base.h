@@ -516,9 +516,6 @@ struct server {
 	size_t max_conns;
 
 	/* buffers */
-	buffer *parse_full_path;
-	buffer *response_header;
-	buffer *response_range;
 	buffer *tmp_buf;
 
 	buffer *tmp_chunk_len;
@@ -583,5 +580,10 @@ struct server {
 	pid_t pid;
 };
 
+
+struct http_connection_t {
+	server * srv;
+	connection *con;
+} http_connection_t;
 
 #endif
