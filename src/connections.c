@@ -710,6 +710,220 @@ int connection_reset(server *srv, connection *con) {
 	return 0;
 }
 
+static int connection_handle_request_start_state(server *srv, connection *con) {
+	con->request_start = srv->cur_ts;
+	con->read_idle_ts = srv->cur_ts;
+	if (con->conf.high_precision_timestamps)
+		log_clock_gettime_realtime(&con->request_start_hp);
+
+	con->request_count++;
+	con->loops_per_request = 0;
+
+	connection_set_state(srv, con, CON_STATE_READ);
+	return 0;
+}
+
+static int connection_handle_request_end_state(server *srv, connection *con) {
+	buffer_reset(con->uri.authority);
+	buffer_reset(con->uri.path);
+	buffer_reset(con->uri.query);
+	buffer_reset(con->request.orig_uri);
+
+	if (http_request_parse(srv, con)) {
+		/* we have to read some data from the POST request */
+
+		connection_set_state(srv, con, CON_STATE_READ_POST);
+
+		return 0;
+	}
+
+	connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
+	return 0;
+}
+
+static int connection_handle_hande_request_state(server *srv, connection *con) {
+	/*
+	 * the request is parsed
+	 *
+	 * decided what to do with the request
+	 * -
+	 *
+	 *
+	 */
+	int r = 0, done = 0;
+	switch (r = http_response_prepare(srv, con)) {
+	case HANDLER_WAIT_FOR_EVENT:
+		if (!con->file_finished && (!con->file_started || 0 == con->conf.stream_response_body)) {
+			break; /* come back here */
+		}
+		/* response headers received from backend; fall through to start response */
+		/* fall through */
+	case HANDLER_FINISHED:
+		if (con->error_handler_saved_status > 0) {
+			con->request.http_method = con->error_handler_saved_method;
+		}
+		if (con->mode == DIRECT || con->conf.error_intercept) {
+			if (con->error_handler_saved_status) {
+				if (con->error_handler_saved_status > 0) {
+					con->http_status = con->error_handler_saved_status;
+				} else if (con->http_status == 404 || con->http_status == 403) {
+					/* error-handler-404 is a 404 */
+					con->http_status = -con->error_handler_saved_status;
+				} else {
+					/* error-handler-404 is back and has generated content */
+					/* if Status: was set, take it otherwise use 200 */
+				}
+			} else if (con->http_status >= 400) {
+				buffer *error_handler = NULL;
+				if (!buffer_string_is_empty(con->conf.error_handler)) {
+					error_handler = con->conf.error_handler;
+				} else if ((con->http_status == 404 || con->http_status == 403)
+					   && !buffer_string_is_empty(con->conf.error_handler_404)) {
+					error_handler = con->conf.error_handler_404;
+				}
+
+				if (error_handler) {
+					/* call error-handler */
+
+					/* set REDIRECT_STATUS to save current HTTP status code
+					 * for access by dynamic handlers
+					 * https://redmine.lighttpd.net/issues/1828 */
+					data_string *ds;
+					if (NULL == (ds = (data_string *)array_get_unused_element(con->environment, TYPE_STRING))) {
+						ds = data_string_init();
+					}
+					buffer_copy_string_len(ds->key, CONST_STR_LEN("REDIRECT_STATUS"));
+					buffer_append_int(ds->value, con->http_status);
+					array_insert_unique(con->environment, (data_unset *)ds);
+
+					if (error_handler == con->conf.error_handler) {
+						plugins_call_connection_reset(srv, con);
+
+						if (con->request.content_length) {
+							if (con->request.content_length != con->request_content_queue->bytes_in) {
+								con->keep_alive = 0;
+							}
+							con->request.content_length = 0;
+							chunkqueue_reset(con->request_content_queue);
+						}
+
+						con->is_writable = 1;
+						con->file_finished = 0;
+						con->file_started = 0;
+						con->parsed_response = 0;
+						con->response.keep_alive = 0;
+						con->response.content_length = -1;
+						con->response.transfer_encoding = 0;
+
+						con->error_handler_saved_status = con->http_status;
+						con->error_handler_saved_method = con->request.http_method;
+
+						con->request.http_method = HTTP_METHOD_GET;
+					} else { /*(preserve behavior for server.error-handler-404)*/
+						con->error_handler_saved_status = -con->http_status; /*(negative to flag old behavior)*/
+					}
+
+					buffer_copy_buffer(con->request.uri, error_handler);
+					connection_handle_errdoc_init(srv, con);
+					con->http_status = 0; /*(after connection_handle_errdoc_init())*/
+
+					done = -1;
+					break;
+				}
+			}
+		}
+		if (con->http_status == 0) con->http_status = 200;
+
+		/* we have something to send, go on */
+		connection_set_state(srv, con, CON_STATE_RESPONSE_START);
+		break;
+	case HANDLER_WAIT_FOR_FD:
+		srv->want_fds++;
+
+		fdwaitqueue_append(srv, con);
+
+		break;
+	case HANDLER_COMEBACK:
+		done = -1;
+		break;
+	case HANDLER_ERROR:
+		/* something went wrong */
+		connection_set_state(srv, con, CON_STATE_ERROR);
+		break;
+	default:
+		log_error_write(srv, __FILE__, __LINE__, "sdd", "unknown ret-value: ", con->fd, r);
+		break;
+	}
+	return done;
+}
+
+static int connection_handle_response_start_state(server *srv, connection *con) {
+	/*
+	 * the decision is done
+	 * - create the HTTP-Response-Header
+	 *
+	 */
+
+	if (-1 == connection_handle_write_prepare(srv, con)) {
+		connection_set_state(srv, con, CON_STATE_ERROR);
+
+		return 0;
+	}
+
+	connection_set_state(srv, con, CON_STATE_WRITE);
+	return 0;
+}
+
+static int connection_handle_connect_state(server *srv, connection *con) {
+	UNUSED(srv);
+	chunkqueue_reset(con->read_queue);
+	con->request_count = 0;
+	return 0;
+}
+
+static int connection_handle_write_state(server *srv, connection *con) {
+	int r=0;
+	do {
+		/* only try to write if we have something in the queue */
+		if (!chunkqueue_is_empty(con->write_queue)) {
+			if (con->is_writable) {
+				if (-1 == connection_handle_write(srv, con)) {
+					log_error_write(srv, __FILE__, __LINE__, "ds",
+							con->fd,
+							"handle write failed.");
+					connection_set_state(srv, con, CON_STATE_ERROR);
+					break;
+				}
+				if (con->state != CON_STATE_WRITE) break;
+			}
+		} else if (con->file_finished) {
+			connection_set_state(srv, con, CON_STATE_RESPONSE_END);
+			break;
+		}
+
+		if (con->mode != DIRECT && !con->file_finished) {
+			switch(r = plugins_call_handle_subrequest(srv, con)) {
+			case HANDLER_WAIT_FOR_EVENT:
+			case HANDLER_FINISHED:
+			case HANDLER_GO_ON:
+				break;
+			case HANDLER_WAIT_FOR_FD:
+				srv->want_fds++;
+				fdwaitqueue_append(srv, con);
+				break;
+			case HANDLER_COMEBACK:
+			default:
+				log_error_write(srv, __FILE__, __LINE__, "sdd", "unexpected subrequest handler ret-value: ", con->fd, r);
+				/* fall through */
+			case HANDLER_ERROR:
+				connection_set_state(srv, con, CON_STATE_ERROR);
+				break;
+			}
+		}
+	} while (con->state == CON_STATE_WRITE && (!chunkqueue_is_empty(con->write_queue) ? con->is_writable : con->file_finished));
+	return 0;
+}
+
 /**
  * handle all header and content read
  *
@@ -1150,177 +1364,27 @@ int connection_state_machine(server *srv, connection *con) {
 
 		switch (con->state) {
 		case CON_STATE_REQUEST_START: /* transient */
-			con->request_start = srv->cur_ts;
-			con->read_idle_ts = srv->cur_ts;
-			if (con->conf.high_precision_timestamps)
-				log_clock_gettime_realtime(&con->request_start_hp);
-
-			con->request_count++;
-			con->loops_per_request = 0;
-
-			connection_set_state(srv, con, CON_STATE_READ);
-
+			connection_handle_request_start_state(srv, con);
 			break;
 		case CON_STATE_REQUEST_END: /* transient */
-			buffer_reset(con->uri.authority);
-			buffer_reset(con->uri.path);
-			buffer_reset(con->uri.query);
-			buffer_reset(con->request.orig_uri);
-
-			if (http_request_parse(srv, con)) {
-				/* we have to read some data from the POST request */
-
-				connection_set_state(srv, con, CON_STATE_READ_POST);
-
-				break;
-			}
-
-			connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
-
+			connection_handle_request_end_state(srv, con);
 			break;
 		case CON_STATE_READ_POST:
+			ostate = CON_STATE_HANDLE_REQUEST;
+			done = connection_handle_hande_request_state(srv, con);
+			break;
 		case CON_STATE_HANDLE_REQUEST:
-			/*
-			 * the request is parsed
-			 *
-			 * decided what to do with the request
-			 * -
-			 *
-			 *
-			 */
-
-			switch (r = http_response_prepare(srv, con)) {
-			case HANDLER_WAIT_FOR_EVENT:
-				if (!con->file_finished && (!con->file_started || 0 == con->conf.stream_response_body)) {
-					break; /* come back here */
-				}
-				/* response headers received from backend; fall through to start response */
-				/* fall through */
-			case HANDLER_FINISHED:
-				if (con->error_handler_saved_status > 0) {
-					con->request.http_method = con->error_handler_saved_method;
-				}
-				if (con->mode == DIRECT || con->conf.error_intercept) {
-					if (con->error_handler_saved_status) {
-						if (con->error_handler_saved_status > 0) {
-							con->http_status = con->error_handler_saved_status;
-						} else if (con->http_status == 404 || con->http_status == 403) {
-							/* error-handler-404 is a 404 */
-							con->http_status = -con->error_handler_saved_status;
-						} else {
-							/* error-handler-404 is back and has generated content */
-							/* if Status: was set, take it otherwise use 200 */
-						}
-					} else if (con->http_status >= 400) {
-						buffer *error_handler = NULL;
-						if (!buffer_string_is_empty(con->conf.error_handler)) {
-							error_handler = con->conf.error_handler;
-						} else if ((con->http_status == 404 || con->http_status == 403)
-							   && !buffer_string_is_empty(con->conf.error_handler_404)) {
-							error_handler = con->conf.error_handler_404;
-						}
-
-						if (error_handler) {
-							/* call error-handler */
-
-							/* set REDIRECT_STATUS to save current HTTP status code
-							 * for access by dynamic handlers
-							 * https://redmine.lighttpd.net/issues/1828 */
-							data_string *ds;
-							if (NULL == (ds = (data_string *)array_get_unused_element(con->environment, TYPE_STRING))) {
-								ds = data_string_init();
-							}
-							buffer_copy_string_len(ds->key, CONST_STR_LEN("REDIRECT_STATUS"));
-							buffer_append_int(ds->value, con->http_status);
-							array_insert_unique(con->environment, (data_unset *)ds);
-
-							if (error_handler == con->conf.error_handler) {
-								plugins_call_connection_reset(srv, con);
-
-								if (con->request.content_length) {
-									if (con->request.content_length != con->request_content_queue->bytes_in) {
-										con->keep_alive = 0;
-									}
-									con->request.content_length = 0;
-									chunkqueue_reset(con->request_content_queue);
-								}
-
-								con->is_writable = 1;
-								con->file_finished = 0;
-								con->file_started = 0;
-								con->parsed_response = 0;
-								con->response.keep_alive = 0;
-								con->response.content_length = -1;
-								con->response.transfer_encoding = 0;
-
-								con->error_handler_saved_status = con->http_status;
-								con->error_handler_saved_method = con->request.http_method;
-
-								con->request.http_method = HTTP_METHOD_GET;
-							} else { /*(preserve behavior for server.error-handler-404)*/
-								con->error_handler_saved_status = -con->http_status; /*(negative to flag old behavior)*/
-							}
-
-							buffer_copy_buffer(con->request.uri, error_handler);
-							connection_handle_errdoc_init(srv, con);
-							con->http_status = 0; /*(after connection_handle_errdoc_init())*/
-
-							done = -1;
-							break;
-						}
-					}
-				}
-				if (con->http_status == 0) con->http_status = 200;
-
-				/* we have something to send, go on */
-				connection_set_state(srv, con, CON_STATE_RESPONSE_START);
-				break;
-			case HANDLER_WAIT_FOR_FD:
-				srv->want_fds++;
-
-				fdwaitqueue_append(srv, con);
-
-				break;
-			case HANDLER_COMEBACK:
-				done = -1;
-				break;
-			case HANDLER_ERROR:
-				/* something went wrong */
-				connection_set_state(srv, con, CON_STATE_ERROR);
-				break;
-			default:
-				log_error_write(srv, __FILE__, __LINE__, "sdd", "unknown ret-value: ", con->fd, r);
-				break;
-			}
-
-			if (con->state == CON_STATE_HANDLE_REQUEST && ostate == CON_STATE_READ_POST) {
-				ostate = CON_STATE_HANDLE_REQUEST;
-			}
+			done = connection_handle_hande_request_state(srv, con);
 			break;
 		case CON_STATE_RESPONSE_START:
-			/*
-			 * the decision is done
-			 * - create the HTTP-Response-Header
-			 *
-			 */
-
-			if (-1 == connection_handle_write_prepare(srv, con)) {
-				connection_set_state(srv, con, CON_STATE_ERROR);
-
-				break;
-			}
-
-			connection_set_state(srv, con, CON_STATE_WRITE);
+			connection_handle_response_start_state(srv, con);
 			break;
 		case CON_STATE_RESPONSE_END: /* transient */
 		case CON_STATE_ERROR:        /* transient */
 			connection_handle_response_end_state(srv, con);
 			break;
 		case CON_STATE_CONNECT:
-			chunkqueue_reset(con->read_queue);
-
-			con->request_count = 0;
-
+			connection_handle_connect_state(srv, con);
 			break;
 		case CON_STATE_CLOSE:
 			connection_handle_close_state(srv, con);
@@ -1329,45 +1393,7 @@ int connection_state_machine(server *srv, connection *con) {
 			connection_handle_read_state(srv, con);
 			break;
 		case CON_STATE_WRITE:
-			do {
-				/* only try to write if we have something in the queue */
-				if (!chunkqueue_is_empty(con->write_queue)) {
-					if (con->is_writable) {
-						if (-1 == connection_handle_write(srv, con)) {
-							log_error_write(srv, __FILE__, __LINE__, "ds",
-									con->fd,
-									"handle write failed.");
-							connection_set_state(srv, con, CON_STATE_ERROR);
-							break;
-						}
-						if (con->state != CON_STATE_WRITE) break;
-					}
-				} else if (con->file_finished) {
-					connection_set_state(srv, con, CON_STATE_RESPONSE_END);
-					break;
-				}
-
-				if (con->mode != DIRECT && !con->file_finished) {
-					switch(r = plugins_call_handle_subrequest(srv, con)) {
-					case HANDLER_WAIT_FOR_EVENT:
-					case HANDLER_FINISHED:
-					case HANDLER_GO_ON:
-						break;
-					case HANDLER_WAIT_FOR_FD:
-						srv->want_fds++;
-						fdwaitqueue_append(srv, con);
-						break;
-					case HANDLER_COMEBACK:
-					default:
-						log_error_write(srv, __FILE__, __LINE__, "sdd", "unexpected subrequest handler ret-value: ", con->fd, r);
-						/* fall through */
-					case HANDLER_ERROR:
-						connection_set_state(srv, con, CON_STATE_ERROR);
-						break;
-					}
-				}
-			} while (con->state == CON_STATE_WRITE && (!chunkqueue_is_empty(con->write_queue) ? con->is_writable : con->file_finished));
-
+			connection_handle_write_state(srv, con);
 			break;
 		default:
 			log_error_write(srv, __FILE__, __LINE__, "sdd",
