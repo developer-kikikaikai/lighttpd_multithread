@@ -412,7 +412,7 @@ handler_t connection_handle_read_post_state(server *srv, connection *con) {
 	int is_closed = 0;
 
 	if (con->is_readable) {
-		con->read_idle_ts = srv->cur_ts;
+		con->read_idle_ts = server_get_cur_ts();
 
 		switch(con->network_read(srv, con, con->read_queue, MAX_READ_LIMIT)) {
 		case -1:

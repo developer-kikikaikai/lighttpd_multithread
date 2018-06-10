@@ -222,14 +222,11 @@ static int daemonize(void) {
 #endif
 
 static server *server_init(void) {
-	int i;
 	server *srv = calloc(1, sizeof(*srv));
 	force_assert(srv);
 #define CLEAN(x) \
 	srv->x = buffer_init();
 
-	CLEAN(ts_debug_str);
-	CLEAN(ts_date_str);
 	CLEAN(errorlog_buf);
 	CLEAN(tmp_buf);
 	srv->empty_string = buffer_init_string("");
@@ -248,6 +245,8 @@ static server *server_init(void) {
 	CLEAN(tmp_chunk_len);
 #undef CLEAN
 
+	server_init_ts(srv);
+
 #define CLEAN(x) \
 	srv->x = array_init();
 
@@ -256,15 +255,9 @@ static server *server_init(void) {
 	CLEAN(status);
 #undef CLEAN
 
-	for (i = 0; i < FILE_CACHE_MAX; i++) {
-		srv->mtime_cache[i].mtime = (time_t)-1;
-		srv->mtime_cache[i].str = buffer_init();
-	}
+	strftime_cache_init();
 
 	li_rand_reseed();
-
-	srv->cur_ts = time(NULL);
-	srv->startup_ts = srv->cur_ts;
 
 	srv->conns = calloc(1, sizeof(*srv->conns));
 	force_assert(srv->conns);
@@ -303,9 +296,7 @@ static server *server_init(void) {
 static void server_free(server *srv) {
 	size_t i;
 
-	for (i = 0; i < FILE_CACHE_MAX; i++) {
-		buffer_free(srv->mtime_cache[i].str);
-	}
+	strftime_cache_exit();
 
 	if (oneshot_fd > 0) {
 		close(oneshot_fd);
@@ -314,8 +305,6 @@ static void server_free(server *srv) {
 #define CLEAN(x) \
 	buffer_free(srv->x);
 
-	CLEAN(ts_debug_str);
-	CLEAN(ts_date_str);
 	CLEAN(errorlog_buf);
 	CLEAN(tmp_buf);
 	CLEAN(empty_string);
@@ -894,7 +883,7 @@ static void server_graceful_shutdown_maint (server *srv) {
              * (from zero) *up to* one more second, but no more */
             if (HTTP_LINGER_TIMEOUT > 1)
                 con->close_timeout_ts -= (HTTP_LINGER_TIMEOUT - 1);
-            if (srv->cur_ts - con->close_timeout_ts > HTTP_LINGER_TIMEOUT)
+            if (server_get_cur_ts() - con->close_timeout_ts > HTTP_LINGER_TIMEOUT)
                 changed = 1;
         }
         else if (con->state == CON_STATE_READ && con->request_count > 1
@@ -1519,7 +1508,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 				int status;
 
 				if (-1 != (pid = wait(&status))) {
-					srv->cur_ts = time(NULL);
+					server_update_cur_ts(time(NULL));
 					if (plugins_call_handle_waitpid(srv, pid, status) != HANDLER_GO_ON) {
 						if (!timer) alarm((timer = 5));
 						continue;
@@ -1541,9 +1530,11 @@ static int server_main (server * const srv, int argc, char **argv) {
 						}
 					}
 				} else {
+					time_t cur_ts;
 					switch (errno) {
 					case EINTR:
-						srv->cur_ts = time(NULL);
+						cur_ts = time(NULL);
+						server_update_cur_ts(cur_ts);
 						/**
 						 * if we receive a SIGHUP we have to close our logs ourself as we don't 
 						 * have the mainloop who can help us here
@@ -1562,7 +1553,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 							handle_sig_alarm = 0;
 							timer = 0;
 							plugins_call_handle_trigger(srv);
-							fdevent_restart_logger_pipes(srv->cur_ts);
+							fdevent_restart_logger_pipes(cur_ts);
 						}
 						break;
 					default:
@@ -1667,7 +1658,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 	{
 		int fd = fdevent_open_devnull();
 		if (fd >= 0) {
-			srv->cur_fds = fd;
+			server_set_cur_fds(fd);
 			close(fd);
 		}
 	}
@@ -1685,6 +1676,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 		int n;
 		size_t ndx;
 		time_t min_ts;
+		time_t cur_ts = server_get_cur_ts();
 
 		if (handle_sig_hup) {
 			handler_t r;
@@ -1731,8 +1723,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 
 			/* get current time */
 			min_ts = time(NULL);
-
-			if (min_ts != srv->cur_ts) {
+			if (min_ts != cur_ts) {
 #ifdef DEBUG_CONNECTION_STATES
 				int cs = 0;
 #endif
@@ -1750,7 +1741,8 @@ static int server_main (server * const srv, int argc, char **argv) {
 					break;
 				}
 
-				srv->cur_ts = min_ts;
+				cur_ts = min_ts;
+				server_update_cur_ts(cur_ts);
 
 				/* check idle time limit, if enabled */
 				if (idle_limit && idle_limit < min_ts - last_active_ts && !graceful_shutdown) {
@@ -1792,12 +1784,12 @@ static int server_main (server * const srv, int argc, char **argv) {
 					int t_diff;
 
 					if (con->state == CON_STATE_CLOSE) {
-						if (srv->cur_ts - con->close_timeout_ts > HTTP_LINGER_TIMEOUT) {
+						if ( - con->close_timeout_ts > HTTP_LINGER_TIMEOUT) {
 							changed = 1;
 						}
 					} else if (waitevents & FDEVENT_IN) {
 						if (con->request_count == 1 || con->state != CON_STATE_READ) { /* e.g. CON_STATE_READ_POST || CON_STATE_WRITE */
-							if (srv->cur_ts - con->read_idle_ts > con->conf.max_read_idle) {
+							if (cur_ts - con->read_idle_ts > con->conf.max_read_idle) {
 								/* time - out */
 								if (con->conf.log_request_handling) {
 									log_error_write(srv, __FILE__, __LINE__, "sd",
@@ -1808,7 +1800,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 								changed = 1;
 							}
 						} else {
-							if (srv->cur_ts - con->read_idle_ts > con->keep_alive_idle) {
+							if (cur_ts - con->read_idle_ts > con->keep_alive_idle) {
 								/* time - out */
 								if (con->conf.log_request_handling) {
 									log_error_write(srv, __FILE__, __LINE__, "sd",
@@ -1829,13 +1821,13 @@ static int server_main (server * const srv, int argc, char **argv) {
 					if ((con->state == CON_STATE_WRITE) &&
 					    (con->write_request_ts != 0)) {
 #if 0
-						if (srv->cur_ts - con->write_request_ts > 60) {
+						if (cur_ts - con->write_request_ts > 60) {
 							log_error_write(srv, __FILE__, __LINE__, "sdd",
-									"connection closed - pre-write-request-timeout:", con->fd, srv->cur_ts - con->write_request_ts);
+									"connection closed - pre-write-request-timeout:", con->fd, cur_ts - con->write_request_ts);
 						}
 #endif
 
-						if (srv->cur_ts - con->write_request_ts > con->conf.max_write_idle) {
+						if (cur_ts - con->write_request_ts > con->conf.max_write_idle) {
 							/* time - out */
 							if (con->conf.log_timeouts) {
 								log_error_write(srv, __FILE__, __LINE__, "sbsbsosds",
@@ -1855,7 +1847,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 					}
 
 					/* we don't like div by zero */
-					if (0 == (t_diff = srv->cur_ts - con->connection_start)) t_diff = 1;
+					if (0 == (t_diff = cur_ts - con->connection_start)) t_diff = 1;
 
 					if (con->traffic_limit_reached &&
 					    (con->conf.kbytes_per_second == 0 ||
@@ -1903,7 +1895,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 					}
 					if (0 == srv->srvconf.max_worker) {
 						/* check piped-loggers and restart, even if shutting down */
-						if (fdevent_waitpid_logger_pipe_pid(pid, srv->cur_ts)) {
+						if (fdevent_waitpid_logger_pipe_pid(pid, cur_ts)) {
 							continue;
 						}
 					}
@@ -1917,7 +1909,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 		} else if (srv->sockets_disabled) {
 			/* our server sockets are disabled, why ? */
 
-			if ((srv->cur_fds + srv->want_fds < srv->max_fds * 8 / 10) && /* we have enough unused fds */
+			if ((server_get_cur_fds() + srv->want_fds < srv->max_fds * 8 / 10) && /* we have enough unused fds */
 			    (srv->conns->used <= srv->max_conns * 9 / 10)) {
 				server_sockets_set_event(srv, FDEVENT_IN);
 				log_error_write(srv, __FILE__, __LINE__, "s", "[note] sockets enabled again");
@@ -1925,8 +1917,8 @@ static int server_main (server * const srv, int argc, char **argv) {
 				srv->sockets_disabled = 0;
 			}
 		} else {
-			if ((srv->cur_fds + srv->want_fds > srv->max_fds * 9 / 10) || /* out of fds */
-			    (srv->conns->used >= srv->max_conns)) { /* out of connections */
+			if ((srv->conns->used >= srv->max_conns) || /* out of connections */
+			    (server_get_cur_fds() + srv->want_fds > srv->max_fds * 9 / 10) ) { /* out of fds */
 				/* disable server-fds */
 				server_sockets_set_event(srv, 0);
 
@@ -1950,7 +1942,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 		/* we still have some fds to share */
 		if (srv->want_fds) {
 			/* check the fdwaitqueue for waiting fds */
-			int free_fds = srv->max_fds - srv->cur_fds - 16;
+			int free_fds = srv->max_fds - server_get_cur_fds() - 16;
 			connection *con;
 
 			for (; free_fds > 0 && NULL != (con = fdwaitqueue_unshift(srv, srv->fdwaitqueue)); free_fds--) {
@@ -1965,7 +1957,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 			int fd;
 			int revents;
 			int fd_ndx;
-			last_active_ts = srv->cur_ts;
+			last_active_ts = cur_ts;
 			fd_ndx = -1;
 			do {
 				fdevent_handler handler;

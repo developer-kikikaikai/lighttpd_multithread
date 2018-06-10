@@ -5,6 +5,7 @@
 #include "base.h"
 #include "buffer.h"
 #include "log.h"
+#include "server.h"
 
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -349,7 +350,7 @@ void fdevent_sched_run(server *srv, fdevents *ev) {
 			log_error_write(srv, __FILE__, __LINE__, "sds", "close failed ", fd, strerror(errno));
 		}
 		else {
-			--srv->cur_fds;
+			server_decrement_cur_fds();
 		}
 
 		fdn_tmp = fdn;

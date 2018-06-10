@@ -656,7 +656,7 @@ static int cgi_write_request(server *srv, handler_ctx *hctx, int fd) {
 		/* sent all request body input */
 		/* close connection to the cgi-script */
 		if (-1 == hctx->fdtocgi) { /*(received request body sent in initial send to pipe buffer)*/
-			--srv->cur_fds;
+			server_decrement_cur_fds();
 			if (close(fd)) {
 				log_error_write(srv, __FILE__, __LINE__, "sds", "cgi stdin close failed ", fd, strerror(errno));
 			}
@@ -793,7 +793,7 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, handler_
 		hctx->fd = from_cgi_fds[0];
 		hctx->fde_ndx = -1;
 
-		++srv->cur_fds;
+		server_increment_cur_fds();
 
 		cgi_pid_add(p, hctx->pid, hctx);
 
@@ -814,7 +814,7 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, handler_
 				return -1;
 			}
 
-			++srv->cur_fds;
+			server_increment_cur_fds();
 		}
 
 		fdevent_register(srv->ev, hctx->fd, cgi_handle_fdevent, hctx);

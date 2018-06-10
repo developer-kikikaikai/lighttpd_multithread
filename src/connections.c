@@ -129,7 +129,7 @@ static int connection_close(server *srv, connection *con) {
 	}
 #endif
 	else {
-		srv->cur_fds--;
+		server_decrement_cur_fds();
 	}
 
 	if (srv->srvconf.log_state_handling) {
@@ -160,6 +160,7 @@ static void connection_read_for_eos(server *srv, connection *con) {
 	 * still have unread data, and closing before reading
 	 * it will make the client not see all our output.
 	 */
+	UNUSED(srv);
 	ssize_t len;
 	const int type = con->dst_addr.plain.sa_family;
 	char buf[16384];
@@ -174,13 +175,13 @@ static void connection_read_for_eos(server *srv, connection *con) {
       #endif
 
 	/* 0 == len || (len < 0 && (errno is a non-recoverable error)) */
-		con->close_timeout_ts = srv->cur_ts - (HTTP_LINGER_TIMEOUT+1);
+		con->close_timeout_ts = server_get_cur_ts() - (HTTP_LINGER_TIMEOUT+1);
 }
 
 static void connection_handle_close_state(server *srv, connection *con) {
 	connection_read_for_eos(srv, con);
 
-	if (srv->cur_ts - con->close_timeout_ts > HTTP_LINGER_TIMEOUT) {
+	if (server_get_cur_ts() - con->close_timeout_ts > HTTP_LINGER_TIMEOUT) {
 		connection_close(srv, con);
 	}
 }
@@ -192,7 +193,7 @@ static void connection_handle_shutdown(server *srv, connection *con) {
 
 	/* close the connection */
 	if (con->fd >= 0 && 0 == shutdown(con->fd, SHUT_WR)) {
-		con->close_timeout_ts = srv->cur_ts;
+		con->close_timeout_ts = server_get_cur_ts();
 		connection_set_state(srv, con, CON_STATE_CLOSE);
 
 		if (srv->srvconf.log_state_handling) {
@@ -220,8 +221,8 @@ static void connection_handle_response_end_state(server *srv, connection *con) {
         if (con->keep_alive) {
 		connection_reset(srv, con);
 #if 0
-		con->request_start = srv->cur_ts;
-		con->read_idle_ts = srv->cur_ts;
+		con->request_start = server_get_cur_ts();
+		con->read_idle_ts = con->request_start;
 #endif
 		connection_set_state(srv, con, CON_STATE_REQUEST_START);
 	} else {
@@ -486,7 +487,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 static int connection_handle_write(server *srv, connection *con) {
 	switch(connection_write_chunkqueue(srv, con, con->write_queue, MAX_WRITE_LIMIT)) {
 	case 0:
-		con->write_request_ts = srv->cur_ts;
+		con->write_request_ts = server_get_cur_ts();
 		if (con->file_finished) {
 			connection_set_state(srv, con, CON_STATE_RESPONSE_END);
 		}
@@ -500,7 +501,7 @@ static int connection_handle_write(server *srv, connection *con) {
 		connection_set_state(srv, con, CON_STATE_ERROR);
 		break;
 	case 1:
-		con->write_request_ts = srv->cur_ts;
+		con->write_request_ts = server_get_cur_ts();
 		con->is_writable = 0;
 
 		/* not finished yet -> WRITE */
@@ -708,8 +709,8 @@ int connection_reset(server *srv, connection *con) {
 }
 
 static int connection_handle_request_start_state(server *srv, connection *con) {
-	con->request_start = srv->cur_ts;
-	con->read_idle_ts = srv->cur_ts;
+	con->request_start = server_get_cur_ts();
+	con->read_idle_ts = con->request_start;
 	if (con->conf.high_precision_timestamps)
 		log_clock_gettime_realtime(&con->request_start_hp);
 
@@ -934,8 +935,10 @@ static int connection_handle_read_state(server *srv, connection *con)  {
 	/* when in CON_STATE_READ: about to receive first byte for a request: */
 	int is_request_start = chunkqueue_is_empty(cq);
 
+	time_t cur_ts = server_get_cur_ts();
+
 	if (con->is_readable) {
-		con->read_idle_ts = srv->cur_ts;
+		con->read_idle_ts = cur_ts;
 
 		switch(con->network_read(srv, con, con->read_queue, MAX_READ_LIMIT)) {
 		case -1:
@@ -957,7 +960,7 @@ static int connection_handle_read_state(server *srv, connection *con)  {
 	/* update request_start timestamp when first byte of
 	 * next request is received on a keep-alive connection */
 	if (con->request_count > 1 && is_request_start) {
-		con->request_start = srv->cur_ts;
+		con->request_start = cur_ts;
 		if (con->conf.high_precision_timestamps)
 			log_clock_gettime_realtime(&con->request_start_hp);
 	}
@@ -1117,10 +1120,10 @@ static void connection_handle_fdevent_set(server *srv, connection *con) {
 		if (r != events) {
 			/* update timestamps when enabling interest in events */
 			if ((r & FDEVENT_IN) && !(events & FDEVENT_IN)) {
-				con->read_idle_ts = srv->cur_ts;
+				con->read_idle_ts = server_get_cur_ts();
 			}
 			if ((r & FDEVENT_OUT) && !(events & FDEVENT_OUT)) {
-				con->write_request_ts = srv->cur_ts;
+				con->write_request_ts = server_get_cur_ts();
 			}
 			fdevent_event_set(srv->ev, &con->fde_ndx, con->fd, r);
 		}
@@ -1178,7 +1181,7 @@ static handler_t connection_handle_fdevent(server *srv, void *context, int reven
 
 	if ((revents & ~(FDEVENT_IN | FDEVENT_OUT)) && con->state != CON_STATE_ERROR) {
 		if (con->state == CON_STATE_CLOSE) {
-			con->close_timeout_ts = srv->cur_ts - (HTTP_LINGER_TIMEOUT+1);
+			con->close_timeout_ts = server_get_cur_ts() - (HTTP_LINGER_TIMEOUT+1);
 		} else if (revents & FDEVENT_HUP) {
 			connection_set_state(srv, con, CON_STATE_ERROR);
 		} else if (revents & FDEVENT_RDHUP) {
@@ -1354,7 +1357,7 @@ static int connection_write_cq(server *srv, connection *con, chunkqueue *cq, off
 connection *connection_accepted(server *srv, server_socket *srv_socket, sock_addr *cnt_addr, int cnt) {
 		connection *con;
 
-		srv->cur_fds++;
+		server_increment_cur_fds();
 
 		/* ok, we have the connection, register it */
 #if 0
@@ -1371,7 +1374,7 @@ connection *connection_accepted(server *srv, server_socket *srv_socket, sock_add
 
 		connection_set_state(srv, con, CON_STATE_REQUEST_START);
 
-		con->connection_start = srv->cur_ts;
+		con->connection_start = server_get_cur_ts();
 		con->dst_addr = *cnt_addr;
 		buffer_copy_string(con->dst_addr_buf, inet_ntop_cache_get_ip(srv, &(con->dst_addr)));
 		con->srv_socket = srv_socket;

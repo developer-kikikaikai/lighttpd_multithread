@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 void
 network_accept_tcp_nagle_disable (const int fd)
@@ -294,7 +295,7 @@ static int network_server_init(server *srv, buffer *host_token, size_t sidx, int
 #endif
 
 	/* */
-	srv->cur_fds = srv_socket->fd;
+	server_set_cur_fds(srv_socket->fd);
 
 	if (fdevent_set_so_reuseaddr(srv_socket->fd, 1) < 0) {
 		log_error_write(srv, __FILE__, __LINE__, "ss", "setsockopt(SO_REUSEADDR) failed:", strerror(errno));
@@ -451,4 +452,33 @@ int network_register_fdevents(server *srv) {
 		fdevent_event_set(srv->ev, &(srv_socket->fde_ndx), srv_socket->fd, FDEVENT_IN);
 	}
 	return 0;
+}
+
+static int server_cur_fds_g;    /* currently used fds */
+static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+#define LOG_LOCK pthread_mutex_lock(&lock);
+#define LOG_UNLOCK pthread_mutex_unlock(&lock);
+
+//don't need lock because it is called by initialize sequence of main thread (before starting other thread) now
+void server_set_cur_fds(int fd) {
+	server_cur_fds_g=fd;
+}
+
+int  server_get_cur_fds(void) {
+	int ret=0;
+LOG_LOCK
+	ret = server_cur_fds_g;
+LOG_UNLOCK
+	return ret;
+}
+void server_increment_cur_fds(void) {
+LOG_LOCK
+	server_cur_fds_g++;
+LOG_UNLOCK
+}
+
+void server_decrement_cur_fds(void) {
+LOG_LOCK
+	server_cur_fds_g--;
+LOG_UNLOCK
 }

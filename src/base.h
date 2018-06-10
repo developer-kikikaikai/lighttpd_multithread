@@ -415,11 +415,6 @@ typedef struct {
 } realpath_cache_type;
 
 typedef struct {
-	time_t  mtime;  /* the key */
-	buffer *str;    /* a buffer for the string represenation */
-} mtime_cache_type;
-
-typedef struct {
 	void  *ptr;
 	size_t used;
 	size_t size;
@@ -503,7 +498,6 @@ struct server {
 	void *plugin_slots;
 
 	int max_fds;    /* max possible fds */
-	int cur_fds;    /* currently used fds */
 	int want_fds;   /* waiting fds */
 	int sockets_disabled;
 
@@ -518,19 +512,10 @@ struct server {
 
 	buffer *cond_check_buf;
 
-	/* caches */
-	mtime_cache_type mtime_cache[FILE_CACHE_MAX];
-
 	array *split_vals;
 
 	/* Timestamps */
-	time_t cur_ts;
-	time_t last_generated_date_ts;
-	time_t last_generated_debug_ts;
 	time_t startup_ts;
-
-	buffer *ts_debug_str;
-	buffer *ts_date_str;
 
 	/* config-file */
 	array *config_touched;

@@ -4,6 +4,7 @@
 #include "stat_cache.h"
 #include "fdevent.h"
 #include "etag.h"
+#include "server.h"
 #include "splaytree.h"
 
 #include <sys/types.h>
@@ -14,6 +15,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 #ifdef HAVE_ATTR_ATTRIBUTES_H
 # include <attr/attributes.h>
@@ -84,6 +86,9 @@ typedef struct stat_cache {
       #endif
 } stat_cache;
 
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+#define CACHE_LOCK pthread_mutex_lock(&lock);
+#define CACHE_UNLOCK pthread_mutex_unlock(&lock);
 
 /* the famous DJB hash function for strings */
 static uint32_t hashme(buffer *str) {
@@ -146,7 +151,9 @@ static void fam_dir_entry_free(FAMConnection *fc, void *data) {
 
 static handler_t stat_cache_handle_fdevent(server *srv, void *_fce, int revent) {
 	size_t i;
-	stat_cache_fam *scf = srv->stat_cache->scf;
+	stat_cache_fam *scf;
+CACHE_LOCK
+	scf = srv->stat_cache->scf;
 	size_t events;
 
 	UNUSED(_fce);
@@ -211,7 +218,7 @@ static handler_t stat_cache_handle_fdevent(server *srv, void *_fce, int revent) 
 
 		FAMClose(&scf->fam);
 	}
-
+CACHE_UNLOCK
 	return HANDLER_GO_ON;
 }
 
@@ -609,6 +616,7 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 	const int follow_symlink = con->conf.follow_symlink;
 	struct stat lst;
 	int file_ndx;
+	handler_t ret_state=HANDLER_GO_ON;
 
 	*ret_sce = NULL;
 
@@ -616,6 +624,7 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 	 * check if the directory for this file has changed
 	 */
 
+CACHE_LOCK
 	sc = srv->stat_cache;
 
 	buffer_copy_buffer(sc->hash_key, name);
@@ -634,9 +643,9 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 
 		if (buffer_is_equal(name, sce->name)) {
 			if (srv->srvconf.stat_cache_engine == STAT_CACHE_ENGINE_SIMPLE) {
-				if (sce->stat_ts == srv->cur_ts && follow_symlink) {
+				if (sce->stat_ts == server_get_cur_ts() && follow_symlink) {
 					*ret_sce = sce;
-					return HANDLER_GO_ON;
+					goto end;
 				}
 			}
 		} else {
@@ -653,10 +662,11 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 			break;
 		case HANDLER_FINISHED:
 			*ret_sce = sce;
-			return HANDLER_GO_ON;
+			goto end;
 		case HANDLER_ERROR:
 		default:
-			return HANDLER_ERROR;
+			ret_state = HANDLER_ERROR;
+			goto end;
 		}
 	}
 #endif
@@ -668,7 +678,8 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 	 *
 	 * */
 	if (-1 == stat(name->ptr, &st)) {
-		return HANDLER_ERROR;
+		ret_state = HANDLER_ERROR;
+		goto end;
 	}
 
 
@@ -676,12 +687,14 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 		/* fix broken stat/open for symlinks to reg files with appended slash on freebsd,osx */
 		if (name->ptr[buffer_string_length(name) - 1] == '/') {
 			errno = ENOTDIR;
-			return HANDLER_ERROR;
+			ret_state = HANDLER_ERROR;
+			goto end;
 		}
 
 		/* try to open the file to check if we can read it */
 		if (-1 == (fd = open(name->ptr, O_RDONLY))) {
-			return HANDLER_ERROR;
+			ret_state = HANDLER_ERROR;
+			goto end;
 		}
 		close(fd);
 	}
@@ -715,7 +728,7 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 	}
 
 	sce->st = st;
-	sce->stat_ts = srv->cur_ts;
+	sce->stat_ts = server_get_cur_ts();
 
 	/* catch the obvious symlinks
 	 *
@@ -772,8 +785,10 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 #endif
 
 	*ret_sce = sce;
+end:
+CACHE_UNLOCK
 
-	return HANDLER_GO_ON;
+	return ret_state;
 }
 
 int stat_cache_open_rdonly_fstat (server *srv, connection *con, buffer *name, struct stat *st) {
@@ -827,7 +842,7 @@ static int stat_cache_tag_old_entries(server *srv, splay_tree *t, int *keys, siz
 
 	sce = t->data;
 
-	if (srv->cur_ts - sce->stat_ts > 2) {
+	if (server_get_cur_ts() - sce->stat_ts > 2) {
 		keys[(*ndx)++] = t->key;
 	}
 
@@ -838,10 +853,10 @@ int stat_cache_trigger_cleanup(server *srv) {
 	stat_cache *sc;
 	size_t max_ndx = 0, i;
 	int *keys;
-
+CACHE_LOCK
 	sc = srv->stat_cache;
 
-	if (!sc->files) return 0;
+	if (!sc->files) goto end;
 
 	keys = calloc(1, sizeof(int) * sc->files->size);
 	force_assert(NULL != keys);
@@ -863,6 +878,7 @@ int stat_cache_trigger_cleanup(server *srv) {
 	}
 
 	free(keys);
-
+end:
+CACHE_UNLOCK
 	return 0;
 }

@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
 
 int http_response_write_header(server *srv, connection *con) {
 	buffer *b;
@@ -95,16 +96,8 @@ int http_response_write_header(server *srv, connection *con) {
 		/* HTTP/1.1 requires a Date: header */
 		buffer_append_string_len(b, CONST_STR_LEN("\r\nDate: "));
 
-		/* cache the generated timestamp */
-		if (srv->cur_ts != srv->last_generated_date_ts) {
-			buffer_string_prepare_copy(srv->ts_date_str, 255);
+		server_update_ts_date_str(b);
 
-			buffer_append_strftime(srv->ts_date_str, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&(srv->cur_ts)));
-
-			srv->last_generated_date_ts = srv->cur_ts;
-		}
-
-		buffer_append_string_buffer(b, srv->ts_date_str);
 	}
 
 	if (!have_server) {

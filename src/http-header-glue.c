@@ -19,6 +19,7 @@
 #include "sys-strings.h"
 #include "sys-socket.h"
 #include <unistd.h>
+#include <pthread.h>
 
 
 int response_header_insert(server *srv, connection *con, const char *key, size_t keylen, const char *value, size_t vallen) {
@@ -127,27 +128,61 @@ int http_response_redirect_to_directory(server *srv, connection *con) {
 	return 0;
 }
 
+#define FILE_CACHE_MAX      16
+typedef struct {
+	time_t  mtime;  /* the key */
+	buffer *str;    /* a buffer for the string represenation */
+} mtime_cache_type;
+/* caches */
+static mtime_cache_type server_mtime_cache[FILE_CACHE_MAX];
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+#define CACHE_LOCK pthread_mutex_lock(&lock);
+#define CACHE_UNLOCK pthread_mutex_unlock(&lock);
+
 buffer * strftime_cache_get(server *srv, time_t last_mod) {
 	static int i;
 	struct tm *tm;
+	buffer * buff=NULL;
+UNUSED(srv);
+CACHE_LOCK
 
 	for (int j = 0; j < FILE_CACHE_MAX; ++j) {
-		if (srv->mtime_cache[j].mtime == last_mod)
-			return srv->mtime_cache[j].str; /* found cache-entry */
+		if (server_mtime_cache[j].mtime == last_mod) {
+			buff = server_mtime_cache[j].str; /* found cache-entry */
+			goto end;
+		}
 	}
 
 	if (++i == FILE_CACHE_MAX) {
 		i = 0;
 	}
 
-	srv->mtime_cache[i].mtime = last_mod;
-	tm = gmtime(&(srv->mtime_cache[i].mtime));
-	buffer_string_set_length(srv->mtime_cache[i].str, 0);
-	buffer_append_strftime(srv->mtime_cache[i].str, "%a, %d %b %Y %H:%M:%S GMT", tm);
-
-	return srv->mtime_cache[i].str;
+	server_mtime_cache[i].mtime = last_mod;
+	tm = gmtime(&(server_mtime_cache[i].mtime));
+	buffer_string_set_length(server_mtime_cache[i].str, 0);
+	buffer_append_strftime(server_mtime_cache[i].str, "%a, %d %b %Y %H:%M:%S GMT", tm);
+	buff = server_mtime_cache[i].str;
+end:
+CACHE_UNLOCK
+	return buff;
 }
 
+void strftime_cache_init(void) {
+CACHE_LOCK
+	for (size_t i = 0; i < FILE_CACHE_MAX; i++) {
+		server_mtime_cache[i].mtime = (time_t)-1;
+		server_mtime_cache[i].str = buffer_init();
+	}
+CACHE_UNLOCK
+}
+
+void strftime_cache_exit(void) {
+CACHE_LOCK
+	for (size_t i = 0; i < FILE_CACHE_MAX; i++) {
+		buffer_free(server_mtime_cache[i].str);
+	}
+CACHE_UNLOCK
+}
 
 int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
 	int head_or_get =

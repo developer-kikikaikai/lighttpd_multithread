@@ -5,6 +5,7 @@
 #include "log.h"
 
 #include "plugin.h"
+#include "server.h"
 #include <sys/types.h>
 #include <sys/wait.h>
 
@@ -285,7 +286,7 @@ static int mod_rrd_exec(server *srv, plugin_data *p) {
     }
 
     p->rrdtool_running = 1;
-    p->rrdtool_startup_ts = srv->cur_ts;
+    p->rrdtool_startup_ts = server_get_cur_ts();
     return 0;
 }
 
@@ -364,19 +365,20 @@ static void mod_rrd_fatal_error(server *srv, plugin_data *p) {
 TRIGGER_FUNC(mod_rrd_trigger) {
 	plugin_data *p = p_d;
 	size_t i;
+	time_t cur_ts = server_get_cur_ts();
 
 	if (!p->rrdtool_running) {
 		/* limit restart to once every 5 sec */
 		/*(0 == p->rrdtool_pid if never activated; not used)*/
 		if (-1 == p->rrdtool_pid
 		    && p->srv_pid == srv->pid
-		    && p->rrdtool_startup_ts + 5 < srv->cur_ts) {
+		    && p->rrdtool_startup_ts + 5 < cur_ts) {
 			mod_rrd_exec(srv, p);
 		}
 		return HANDLER_GO_ON;
 	}
 
-	if ((srv->cur_ts % 60) != 0) return HANDLER_GO_ON;
+	if ((cur_ts % 60) != 0) return HANDLER_GO_ON;
 
 	for (i = 0; i < srv->config_context->used; i++) {
 		plugin_config *s = p->config_storage[i];
@@ -416,7 +418,7 @@ TRIGGER_FUNC(mod_rrd_trigger) {
 		if (p->resp->ptr[0] != 'O' ||
 		    p->resp->ptr[1] != 'K') {
 			/* don't fail on this error if we just started (graceful restart, the old one might have just updated too) */
-			if (!(strstr(p->resp->ptr, "(minimum one second step)") && (srv->cur_ts - srv->startup_ts < 3))) {
+			if (!(strstr(p->resp->ptr, "(minimum one second step)") && (cur_ts - srv->startup_ts < 3))) {
 				log_error_write(srv, __FILE__, __LINE__, "sbb",
 					"rrdtool-response:", p->cmd, p->resp);
 
@@ -441,7 +443,7 @@ static handler_t mod_rrd_waitpid_cb(server *srv, void *p_d, pid_t pid, int statu
 	p->rrdtool_pid = -1;
 
 	/* limit restart to once every 5 sec */
-	if (p->rrdtool_startup_ts + 5 < srv->cur_ts)
+	if (p->rrdtool_startup_ts + 5 < server_get_cur_ts())
 		mod_rrd_exec(srv, p);
 
 	UNUSED(status);

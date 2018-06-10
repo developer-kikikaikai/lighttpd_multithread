@@ -328,7 +328,8 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	buffer_append_string_len(b, CONST_STR_LEN(")</td></tr>\n"));
 	buffer_append_string_len(b, CONST_STR_LEN("<tr><td>Uptime</td><td class=\"string\">"));
 
-	ts = srv->cur_ts - srv->startup_ts;
+	time_t cur_ts = server_get_cur_ts();
+	ts = cur_ts - srv->startup_ts;
 
 	days = ts / (60 * 60 * 24);
 	ts %= (60 * 60 * 24);
@@ -397,7 +398,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	buffer_append_string_len(b, CONST_STR_LEN("<tr><th colspan=\"2\">average (since start)</th></tr>\n"));
 
 	buffer_append_string_len(b, CONST_STR_LEN("<tr><td>Requests</td><td class=\"string\">"));
-	avg = p->abs_requests / (srv->cur_ts - srv->startup_ts);
+	avg = p->abs_requests / (cur_ts - srv->startup_ts);
 
 	mod_status_get_multiplier(&avg, &multiplier, 1000);
 
@@ -407,7 +408,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	buffer_append_string_len(b, CONST_STR_LEN("req/s</td></tr>\n"));
 
 	buffer_append_string_len(b, CONST_STR_LEN("<tr><td>Traffic</td><td class=\"string\">"));
-	avg = p->abs_traffic_out / (srv->cur_ts - srv->startup_ts);
+	avg = p->abs_traffic_out / (cur_ts - srv->startup_ts);
 
 	mod_status_get_multiplier(&avg, &multiplier, 1024);
 
@@ -542,7 +543,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 
 		buffer_append_string_len(b, CONST_STR_LEN("</td><td class=\"int\">"));
 
-		buffer_append_int(b, srv->cur_ts - c->request_start);
+		buffer_append_int(b, cur_ts - c->request_start);
 
 		buffer_append_string_len(b, CONST_STR_LEN("</td><td class=\"string\">"));
 
@@ -620,7 +621,7 @@ static handler_t mod_status_handle_server_status_text(server *srv, connection *c
 
 	/* output uptime */
 	buffer_append_string_len(b, CONST_STR_LEN("Uptime: "));
-	ts = srv->cur_ts - srv->startup_ts;
+	ts = server_get_cur_ts() - srv->startup_ts;
 	buffer_append_int(b, ts);
 	buffer_append_string_len(b, CONST_STR_LEN("\n"));
 
@@ -698,7 +699,7 @@ static handler_t mod_status_handle_server_status_json(server *srv, connection *c
 
 	/* output uptime */
 	buffer_append_string_len(b, CONST_STR_LEN("\t\"Uptime\": "));
-	ts = srv->cur_ts - srv->startup_ts;
+	ts = server_get_cur_ts() - srv->startup_ts;
 	buffer_append_int(b, ts);
 	buffer_append_string_len(b, CONST_STR_LEN(",\n"));
 

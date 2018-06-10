@@ -6,6 +6,7 @@
 #include "rand.h"
 
 #include "plugin.h"
+#include "server.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -234,7 +235,7 @@ URIHANDLER_FUNC(mod_usertrack_uri_handler) {
 	li_MD5_Update(&Md5Ctx, CONST_BUF_LEN(con->uri.path));
 	li_MD5_Update(&Md5Ctx, CONST_STR_LEN("+"));
 
-	li_itostrn(hh, sizeof(hh), srv->cur_ts);
+	li_itostrn(hh, sizeof(hh), server_get_cur_ts());
 	li_MD5_Update(&Md5Ctx, (unsigned char *)hh, strlen(hh));
 	li_itostrn(hh, sizeof(hh), li_rand_pseudo());
 	li_MD5_Update(&Md5Ctx, (unsigned char *)hh, strlen(hh));

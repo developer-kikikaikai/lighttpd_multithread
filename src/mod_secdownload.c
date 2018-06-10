@@ -6,6 +6,7 @@
 #include "base64.h"
 
 #include "plugin.h"
+#include "server.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -502,8 +503,9 @@ URIHANDLER_FUNC(mod_secdownload_uri_handler) {
 	}
 
 	/* timed-out */
-	if ( (srv->cur_ts > ts && (unsigned int) (srv->cur_ts - ts) > p->conf.timeout) ||
-	     (srv->cur_ts < ts && (unsigned int) (ts - srv->cur_ts) > p->conf.timeout) ) {
+	time_t cur_ts = server_get_cur_ts();
+	if ( (cur_ts > ts && (unsigned int) (cur_ts - ts) > p->conf.timeout) ||
+	     (cur_ts < ts && (unsigned int) (ts - cur_ts) > p->conf.timeout) ) {
 		/* "Gone" as the url will never be valid again instead of "408 - Timeout" where the request may be repeated */
 		con->http_status = 410;
 
