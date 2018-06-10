@@ -228,12 +228,9 @@ static server *server_init(void) {
 #define CLEAN(x) \
 	srv->x = buffer_init();
 
-	CLEAN(response_header);
-	CLEAN(parse_full_path);
 	CLEAN(ts_debug_str);
 	CLEAN(ts_date_str);
 	CLEAN(errorlog_buf);
-	CLEAN(response_range);
 	CLEAN(tmp_buf);
 	srv->empty_string = buffer_init_string("");
 	CLEAN(cond_check_buf);
@@ -317,12 +314,9 @@ static void server_free(server *srv) {
 #define CLEAN(x) \
 	buffer_free(srv->x);
 
-	CLEAN(response_header);
-	CLEAN(parse_full_path);
 	CLEAN(ts_debug_str);
 	CLEAN(ts_date_str);
 	CLEAN(errorlog_buf);
-	CLEAN(response_range);
 	CLEAN(tmp_buf);
 	CLEAN(empty_string);
 	CLEAN(cond_check_buf);

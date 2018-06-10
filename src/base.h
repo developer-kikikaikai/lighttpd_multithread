@@ -502,12 +502,6 @@ struct server {
 	buffer_plugin plugins;
 	void *plugin_slots;
 
-	/* counters */
-	int con_opened;
-	int con_read;
-	int con_written;
-	int con_closed;
-
 	int max_fds;    /* max possible fds */
 	int cur_fds;    /* currently used fds */
 	int want_fds;   /* waiting fds */

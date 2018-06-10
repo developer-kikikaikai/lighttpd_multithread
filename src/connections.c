@@ -188,7 +188,6 @@ static void connection_handle_close_state(server *srv, connection *con) {
 static void connection_handle_shutdown(server *srv, connection *con) {
 	plugins_call_handle_connection_shut_wr(srv, con);
 
-	srv->con_closed++;
 	connection_reset(srv, con);
 
 	/* close the connection */
@@ -211,8 +210,6 @@ static void connection_handle_response_end_state(server *srv, connection *con) {
 	if (con->http_status) {
 		plugins_call_handle_request_done(srv, con);
 	}
-
-	if (con->state != CON_STATE_ERROR) srv->con_written++;
 
 	if (con->request.content_length != con->request_content_queue->bytes_in
 	    || con->state == CON_STATE_ERROR) {
@@ -1076,6 +1073,61 @@ found_header_end:
 	return 0;
 }
 
+static void connection_handle_fdevent_set(server *srv, connection *con) {
+	int r = 0;
+	switch(con->state) {
+	case CON_STATE_READ:
+		r = FDEVENT_IN | FDEVENT_RDHUP;
+		break;
+	case CON_STATE_WRITE:
+		/* request write-fdevent only if we really need it
+		 * - if we have data to write
+		 * - if the socket is not writable yet
+		 */
+		if (!chunkqueue_is_empty(con->write_queue) &&
+		    (con->is_writable == 0) &&
+		    (con->traffic_limit_reached == 0)) {
+			r |= FDEVENT_OUT;
+		}
+		/* fall through */
+	case CON_STATE_READ_POST:
+		if (con->conf.stream_request_body & FDEVENT_STREAM_REQUEST_POLLIN) {
+			r |= FDEVENT_IN | FDEVENT_RDHUP;
+		}
+		break;
+	case CON_STATE_CLOSE:
+		r = FDEVENT_IN;
+		break;
+	default:
+		break;
+	}
+	if (con->fd >= 0) {
+		const int events = fdevent_event_get_interest(srv->ev, con->fd);
+		if (con->is_readable < 0) {
+			con->is_readable = 0;
+			r |= FDEVENT_IN;
+		}
+		if (con->is_writable < 0) {
+			con->is_writable = 0;
+			r |= FDEVENT_OUT;
+		}
+		if (events & FDEVENT_RDHUP) {
+			r |= FDEVENT_RDHUP;
+		}
+		if (r != events) {
+			/* update timestamps when enabling interest in events */
+			if ((r & FDEVENT_IN) && !(events & FDEVENT_IN)) {
+				con->read_idle_ts = srv->cur_ts;
+			}
+			if ((r & FDEVENT_OUT) && !(events & FDEVENT_OUT)) {
+				con->write_request_ts = srv->cur_ts;
+			}
+			fdevent_event_set(srv->ev, &con->fde_ndx, con->fd, r);
+		}
+	}
+
+}
+
 static handler_t connection_handle_fdevent(server *srv, void *context, int revents) {
 	connection *con = context;
 
@@ -1309,8 +1361,6 @@ connection *connection_accepted(server *srv, server_socket *srv_socket, sock_add
 		log_error_write(srv, __FILE__, __LINE__, "sd",
 				"appected()", cnt);
 #endif
-		srv->con_opened++;
-
 		con = connections_get_new_connection(srv);
 
 		con->fd = cnt;
@@ -1345,7 +1395,7 @@ connection *connection_accepted(server *srv, server_socket *srv_socket, sock_add
 
 
 int connection_state_machine(server *srv, connection *con) {
-	int done = 0, r;
+	int done = 0;
 
 	if (srv->srvconf.log_state_handling) {
 		log_error_write(srv, __FILE__, __LINE__, "sds",
@@ -1416,57 +1466,6 @@ int connection_state_machine(server *srv, connection *con) {
 				connection_get_state(con->state));
 	}
 
-	r = 0;
-	switch(con->state) {
-	case CON_STATE_READ:
-		r = FDEVENT_IN | FDEVENT_RDHUP;
-		break;
-	case CON_STATE_WRITE:
-		/* request write-fdevent only if we really need it
-		 * - if we have data to write
-		 * - if the socket is not writable yet
-		 */
-		if (!chunkqueue_is_empty(con->write_queue) &&
-		    (con->is_writable == 0) &&
-		    (con->traffic_limit_reached == 0)) {
-			r |= FDEVENT_OUT;
-		}
-		/* fall through */
-	case CON_STATE_READ_POST:
-		if (con->conf.stream_request_body & FDEVENT_STREAM_REQUEST_POLLIN) {
-			r |= FDEVENT_IN | FDEVENT_RDHUP;
-		}
-		break;
-	case CON_STATE_CLOSE:
-		r = FDEVENT_IN;
-		break;
-	default:
-		break;
-	}
-	if (con->fd >= 0) {
-		const int events = fdevent_event_get_interest(srv->ev, con->fd);
-		if (con->is_readable < 0) {
-			con->is_readable = 0;
-			r |= FDEVENT_IN;
-		}
-		if (con->is_writable < 0) {
-			con->is_writable = 0;
-			r |= FDEVENT_OUT;
-		}
-		if (events & FDEVENT_RDHUP) {
-			r |= FDEVENT_RDHUP;
-		}
-		if (r != events) {
-			/* update timestamps when enabling interest in events */
-			if ((r & FDEVENT_IN) && !(events & FDEVENT_IN)) {
-				con->read_idle_ts = srv->cur_ts;
-			}
-			if ((r & FDEVENT_OUT) && !(events & FDEVENT_OUT)) {
-				con->write_request_ts = srv->cur_ts;
-			}
-			fdevent_event_set(srv->ev, &con->fde_ndx, con->fd, r);
-		}
-	}
-
+	connection_handle_fdevent_set(srv, con);
 	return 0;
 }
