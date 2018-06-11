@@ -1058,6 +1058,10 @@ AC_SUBST([CRYPT_LIB])
 AC_MSG_CHECKING([crypt_r/crypt support])
 AC_MSG_RESULT([$found_crypt])
 
+dnl check whether main needs -lstate_manager
+AC_SEARCH_LIBS([state_manager_new], [state_manager])
+AC_SEARCH_LIBS([dputil_list_push], [dputil])
+
 dnl check whether sendfilev needs -lsendfile
 AC_MSG_NOTICE([----------------------------------------])
 save_LIBS=$LIBS

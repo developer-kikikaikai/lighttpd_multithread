@@ -290,6 +290,7 @@ static server *server_init(void) {
 	srv->split_vals = array_init();
 	srv->request_env = plugins_call_handle_request_env;
 
+//	connection_state_machine_init(srv);
 	return srv;
 }
 
@@ -297,6 +298,7 @@ static void server_free(server *srv) {
 	size_t i;
 
 	strftime_cache_exit();
+	connection_state_machine_exit(srv);
 
 	if (oneshot_fd > 0) {
 		close(oneshot_fd);

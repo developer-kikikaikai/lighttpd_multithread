@@ -17,6 +17,7 @@
 #include "plugin.h"
 
 #include "inet_ntop_cache.h"
+#include "state_manager.h"
 
 #include <sys/stat.h>
 
@@ -24,6 +25,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <stdio.h>
 
 #ifdef HAVE_SYS_FILIO_H
 # include <sys/filio.h>
@@ -34,6 +36,74 @@
 typedef struct {
 	        PLUGIN_DATA;
 } plugin_data;
+
+static int connection_handle_close_state(server *srv, connection *con);
+static int connection_handle_response_end_state(server *srv, connection *con);
+static int connection_handle_request_start_state(server *srv, connection *con);
+static int connection_handle_request_end_state(server *srv, connection *con);
+static int connection_handle_handle_request_state(server *srv, connection *con);
+static int connection_handle_response_start_state(server *srv, connection *con);
+static int connection_handle_connect_state(server *srv, connection *con);
+static int connection_handle_write_state(server *srv, connection *con);
+static int connection_handle_read_state(server *srv, connection *con);
+
+static inline int connection_get_ostate(connection *con) {
+	return (con->state==CON_STATE_READ_POST)?CON_STATE_HANDLE_REQUEST:con->state;
+}
+
+static int connection_handle_base(int (*handle)(server *srv, connection *con), void * arg) {
+http_connection_t * http_con = (http_connection_t *)arg;
+	if( handle(http_con->srv, http_con->con) == -1 || http_con->ostate != state_manager_get_current_state(http_con->con->state_machine) ) {
+		
+		http_con->ostate = connection_get_ostate(http_con->con);
+		return state_manager_call(http_con->con->state_machine, arg);
+	}
+	return 0;
+}
+
+static int connection_request_start_state(void *arg) {
+	return connection_handle_base(connection_handle_request_start_state, arg);
+}
+static int connection_request_end_state(void *arg) {
+	return connection_handle_base(connection_handle_request_end_state, arg);
+}
+static int connection_handle_request_state(void *arg) {
+	return connection_handle_base(connection_handle_handle_request_state, arg);
+}
+static int connection_response_start_state(void *arg) {
+	return connection_handle_base(connection_handle_response_start_state, arg);
+}
+static int connection_response_end_state(void *arg) {
+	return connection_handle_base(connection_handle_response_end_state, arg);
+}
+static int connection_connect_state(void *arg) {
+	return connection_handle_base(connection_handle_connect_state, arg);
+}
+static int connection_close_state(void *arg) {
+	return connection_handle_base(connection_handle_close_state, arg);
+}
+static int connection_read_state(void *arg) {
+	return connection_handle_base(connection_handle_read_state, arg);
+}
+static int connection_write_state(void *arg) {
+	return connection_handle_base(connection_handle_write_state, arg);
+}
+
+#undef STATE_METHOD_DEFINE
+
+static const state_info_t state_info[] = {
+	STATE_MNG_SET_INFO_INIT( CON_STATE_REQUEST_START,  connection_request_start_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_REQUEST_END,    connection_request_end_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_READ_POST,      connection_handle_request_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_HANDLE_REQUEST, connection_handle_request_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_RESPONSE_START, connection_response_start_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_RESPONSE_END,   connection_response_end_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_ERROR,          connection_response_end_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_CONNECT,        connection_connect_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_CLOSE,          connection_close_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_READ,           connection_read_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_WRITE,          connection_write_state),
+};
 
 static connection *connections_get_new_connection(server *srv) {
 	connections *conns = srv->conns;
@@ -178,12 +248,13 @@ static void connection_read_for_eos(server *srv, connection *con) {
 		con->close_timeout_ts = server_get_cur_ts() - (HTTP_LINGER_TIMEOUT+1);
 }
 
-static void connection_handle_close_state(server *srv, connection *con) {
+static int connection_handle_close_state(server *srv, connection *con) {
 	connection_read_for_eos(srv, con);
 
 	if (server_get_cur_ts() - con->close_timeout_ts > HTTP_LINGER_TIMEOUT) {
 		connection_close(srv, con);
 	}
+	return 0;
 }
 
 static void connection_handle_shutdown(server *srv, connection *con) {
@@ -205,7 +276,7 @@ static void connection_handle_shutdown(server *srv, connection *con) {
 	}
 }
 
-static void connection_handle_response_end_state(server *srv, connection *con) {
+static int connection_handle_response_end_state(server *srv, connection *con) {
         /* log the request */
         /* (even if error, connection dropped, still write to access log if http_status) */
 	if (con->http_status) {
@@ -228,6 +299,7 @@ static void connection_handle_response_end_state(server *srv, connection *con) {
 	} else {
 		connection_handle_shutdown(srv, con);
 	}
+	return 0;
 }
 
 static void connection_handle_errdoc_init(server *srv, connection *con) {
@@ -574,6 +646,9 @@ connection *connection_init(server *srv) {
 	force_assert(NULL != con->cond_cache);
 	config_setup_connection(srv, con);
 
+	con->state_machine = state_manager_new(sizeof(state_info)/sizeof(state_info[0]), state_info);
+	state_manager_set_state(con->state_machine, CON_STATE_CONNECT);
+	state_manager_show(con->state_machine);
 	return con;
 }
 
@@ -739,7 +814,7 @@ static int connection_handle_request_end_state(server *srv, connection *con) {
 	return 0;
 }
 
-static int connection_handle_hande_request_state(server *srv, connection *con) {
+static int connection_handle_handle_request_state(server *srv, connection *con) {
 	/*
 	 * the request is parsed
 	 *
@@ -882,6 +957,7 @@ static int connection_handle_connect_state(server *srv, connection *con) {
 static int connection_handle_write_state(server *srv, connection *con) {
 	int r=0;
 	do {
+		fprintf(stderr, "loop connection_handle_write_state\n");
 		/* only try to write if we have something in the queue */
 		if (!chunkqueue_is_empty(con->write_queue)) {
 			if (con->is_writable) {
@@ -900,6 +976,7 @@ static int connection_handle_write_state(server *srv, connection *con) {
 		}
 
 		if (con->mode != DIRECT && !con->file_finished) {
+			fprintf(stderr, "call subrequest\n");
 			switch(r = plugins_call_handle_subrequest(srv, con)) {
 			case HANDLER_WAIT_FOR_EVENT:
 			case HANDLER_FINISHED:
@@ -917,6 +994,7 @@ static int connection_handle_write_state(server *srv, connection *con) {
 				connection_set_state(srv, con, CON_STATE_ERROR);
 				break;
 			}
+			fprintf(stderr, "call subrequest end\n");
 		}
 	} while (con->state == CON_STATE_WRITE && (!chunkqueue_is_empty(con->write_queue) ? con->is_writable : con->file_finished));
 	return 0;
@@ -1396,10 +1474,18 @@ connection *connection_accepted(server *srv, server_socket *srv_socket, sock_add
 		return con;
 }
 
+void connection_state_machine_init(server *srv) {
+	UNUSED(srv);
+//	srv->state_machine = state_manager_new(sizeof(state_info)/sizeof(state_info[0]), state_info);
+//	state_manager_show(srv->state_machine);
+}
+
+void connection_state_machine_exit(server *srv) {
+	UNUSED(srv);
+//	state_manager_free(srv->state_machine);
+}
 
 int connection_state_machine(server *srv, connection *con) {
-	int done = 0;
-
 	if (srv->srvconf.log_state_handling) {
 		log_error_write(srv, __FILE__, __LINE__, "sds",
 				"state at start",
@@ -1407,61 +1493,12 @@ int connection_state_machine(server *srv, connection *con) {
 				connection_get_state(con->state));
 	}
 
-	while (done == 0) {
-		size_t ostate = con->state;
+	fprintf(stderr, "call connection_state_machine\n");
+	http_connection_t http_con ={srv, con, connection_get_ostate(con)};
+	state_manager_show(con->state_machine);
+	state_manager_call(con->state_machine, &http_con);
 
-		if (srv->srvconf.log_state_handling) {
-			log_error_write(srv, __FILE__, __LINE__, "sds",
-					"state for fd", con->fd, connection_get_state(con->state));
-		}
-
-		switch (con->state) {
-		case CON_STATE_REQUEST_START: /* transient */
-			connection_handle_request_start_state(srv, con);
-			break;
-		case CON_STATE_REQUEST_END: /* transient */
-			connection_handle_request_end_state(srv, con);
-			break;
-		case CON_STATE_READ_POST:
-			ostate = CON_STATE_HANDLE_REQUEST;
-			done = connection_handle_hande_request_state(srv, con);
-			break;
-		case CON_STATE_HANDLE_REQUEST:
-			done = connection_handle_hande_request_state(srv, con);
-			break;
-		case CON_STATE_RESPONSE_START:
-			connection_handle_response_start_state(srv, con);
-			break;
-		case CON_STATE_RESPONSE_END: /* transient */
-		case CON_STATE_ERROR:        /* transient */
-			connection_handle_response_end_state(srv, con);
-			break;
-		case CON_STATE_CONNECT:
-			connection_handle_connect_state(srv, con);
-			break;
-		case CON_STATE_CLOSE:
-			connection_handle_close_state(srv, con);
-			break;
-		case CON_STATE_READ:
-			connection_handle_read_state(srv, con);
-			break;
-		case CON_STATE_WRITE:
-			connection_handle_write_state(srv, con);
-			break;
-		default:
-			log_error_write(srv, __FILE__, __LINE__, "sdd",
-					"unknown state:", con->fd, con->state);
-
-			break;
-		}
-
-		if (done == -1) {
-			done = 0;
-		} else if (ostate == con->state) {
-			done = 1;
-		}
-	}
-
+	fprintf(stderr, "comeback connection_state_machine\n");
 	if (srv->srvconf.log_state_handling) {
 		log_error_write(srv, __FILE__, __LINE__, "sds",
 				"state at exit:",

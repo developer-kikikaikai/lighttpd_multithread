@@ -4,8 +4,10 @@
 #include "base.h"
 #include "connections.h"
 #include "log.h"
+#include <state_manager.h>
 
 #include <errno.h>
+#include <stdio.h>
 
 const char *connection_get_state(connection_state_t state) {
 	switch (state) {
@@ -42,10 +44,11 @@ const char *connection_get_short_state(connection_state_t state) {
 }
 
 int connection_set_state(server *srv, connection *con, connection_state_t state) {
-	UNUSED(srv);
 
 	con->state = state;
-
+	fprintf(stderr, "change state\n");
+	state_manager_set_state(con->state_machine, state);
+	state_manager_show(con->state_machine);
 	return 0;
 }
 

@@ -25,6 +25,7 @@
 #include "keyvalue.h"
 #include "sock_addr.h"
 #include "etag.h"
+#include <state_manager.h>
 
 struct fdevents;        /* declaration */
 struct stat_cache;      /* declaration */
@@ -399,6 +400,7 @@ struct connection {
 	etag_flags_t etag_flags;
 
 	int conditional_is_valid[COMP_LAST_ELEMENT]; 
+	StateManager state_machine;
 };
 
 typedef struct {
@@ -560,9 +562,10 @@ struct server {
 };
 
 
-struct http_connection_t {
+typedef struct http_connection_t {
 	server * srv;
 	connection *con;
+	int ostate;
 } http_connection_t;
 
 #endif
