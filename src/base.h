@@ -25,7 +25,8 @@
 #include "keyvalue.h"
 #include "sock_addr.h"
 #include "etag.h"
-#include <state_manager.h>
+#include <state_machine.h>
+#include <event_threadpool.h>
 
 struct fdevents;        /* declaration */
 struct stat_cache;      /* declaration */
@@ -289,6 +290,12 @@ typedef enum {
 	CON_STATE_CLOSE
 } connection_state_t;
 
+//event for connection state machine
+typedef enum {
+	CON_EVENT_RUN,
+	CON_EVENT_FD,
+} connection_event_t;
+
 typedef enum {
 	/* condition not active at the moment because itself or some
 	 * pre-condition depends on data not available yet
@@ -400,7 +407,7 @@ struct connection {
 	etag_flags_t etag_flags;
 
 	int conditional_is_valid[COMP_LAST_ELEMENT]; 
-	StateManager state_machine;
+	StateMachineInfo state_machine;
 };
 
 typedef struct {
@@ -533,6 +540,9 @@ struct server {
 	connections *conns;
 	connections *joblist;
 	connections *fdwaitqueue;
+
+	/* event pool for con */
+	EventTPoolManager threadpool;
 
 	struct stat_cache *stat_cache;
 

@@ -1219,8 +1219,9 @@ if test "$ipv6" = true; then
   fi
 fi
 
-dnl check whether main needs -lstate_manager
-AC_SEARCH_LIBS([state_manager_new], [state_manager])
+dnl check whether main needs -lstate_machine
+AC_SEARCH_LIBS([event_tpool_manager_new], [event_threadpool])
+AC_SEARCH_LIBS([state_machine_new], [state_machine])
 
 dnl Check for dpfc
 AC_MSG_NOTICE([----------------------------------------])

@@ -4,7 +4,7 @@
 #include "base.h"
 #include "connections.h"
 #include "log.h"
-#include <state_manager.h>
+#include <state_machine.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -47,8 +47,8 @@ int connection_set_state(server *srv, connection *con, connection_state_t state)
 
 	con->state = state;
 	fprintf(stderr, "change state\n");
-	state_manager_set_state(con->state_machine, state);
-	state_manager_show(con->state_machine);
+	state_machine_set_state(con->state_machine, state);
+	state_machine_show(con->state_machine);
 	return 0;
 }
 

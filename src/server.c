@@ -221,6 +221,11 @@ static int daemonize(void) {
 }
 #endif
 
+static EventTPoolManager server_threadpool_init(void) {
+	//thread value will get from conf
+	return event_tpool_manager_new(-1, 1);
+}
+
 static server *server_init(void) {
 	server *srv = calloc(1, sizeof(*srv));
 	force_assert(srv);
@@ -257,6 +262,8 @@ static server *server_init(void) {
 
 	strftime_cache_init();
 
+	srv->threadpool = server_threadpool_init();
+
 	li_rand_reseed();
 
 	srv->conns = calloc(1, sizeof(*srv->conns));
@@ -290,7 +297,6 @@ static server *server_init(void) {
 	srv->split_vals = array_init();
 	srv->request_env = plugins_call_handle_request_env;
 
-//	connection_state_machine_init(srv);
 	return srv;
 }
 
@@ -298,7 +304,7 @@ static void server_free(server *srv) {
 	size_t i;
 
 	strftime_cache_exit();
-	connection_state_machine_exit(srv);
+	event_tpool_manager_free(srv->threadpool);
 
 	if (oneshot_fd > 0) {
 		close(oneshot_fd);

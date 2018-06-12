@@ -17,7 +17,7 @@
 #include "plugin.h"
 
 #include "inet_ntop_cache.h"
-#include "state_manager.h"
+#include "state_machine.h"
 
 #include <sys/stat.h>
 
@@ -47,6 +47,8 @@ static int connection_handle_connect_state(server *srv, connection *con);
 static int connection_handle_write_state(server *srv, connection *con);
 static int connection_handle_read_state(server *srv, connection *con);
 static void connection_handle_fdevent_set(server *srv, connection *con);
+static void connection_state_machine_init(server *srv, connection *con);
+static void connection_state_machine_exit(server *srv, connection *con);
 
 static inline int connection_get_ostate(connection *con) {
 	return (con->state==CON_STATE_READ_POST)?CON_STATE_HANDLE_REQUEST:con->state;
@@ -61,10 +63,10 @@ http_connection_t * http_con = (http_connection_t *)arg;
 				connection_get_state(http_con->con->state));
 	}
 
-	if( handle(http_con->srv, http_con->con) == -1 || http_con->ostate != state_manager_get_current_state(http_con->con->state_machine) ) {
+	if( handle(http_con->srv, http_con->con) == -1 || http_con->ostate != (int)http_con->con->state ) {
 		
-		http_con->ostate = connection_get_ostate(http_con->con);
-		return state_manager_call(http_con->con->state_machine, arg);
+		http_con->ostate = http_con->con->state;
+		return state_machine_call_event_directry(http_con->con->state_machine, CON_EVENT_RUN, arg);
 	}
 
 	fprintf(stderr, "comeback connection_state_machine\n");
@@ -109,7 +111,7 @@ static int connection_write_state(void *arg) {
 
 #undef STATE_METHOD_DEFINE
 
-static const state_info_t state_info[] = {
+static state_info_t state_info[] = {
 	STATE_MNG_SET_INFO_INIT( CON_STATE_REQUEST_START,  connection_request_start_state),
 	STATE_MNG_SET_INFO_INIT( CON_STATE_REQUEST_END,    connection_request_end_state),
 	STATE_MNG_SET_INFO_INIT( CON_STATE_READ_POST,      connection_handle_request_state),
@@ -121,6 +123,12 @@ static const state_info_t state_info[] = {
 	STATE_MNG_SET_INFO_INIT( CON_STATE_CLOSE,          connection_close_state),
 	STATE_MNG_SET_INFO_INIT( CON_STATE_READ,           connection_read_state),
 	STATE_MNG_SET_INFO_INIT( CON_STATE_WRITE,          connection_write_state),
+};
+
+//Is it OK to use same state info table?
+static const state_event_info_t state_event[] = {
+	{CON_EVENT_RUN, sizeof(state_info)/sizeof(state_info[0]), state_info},
+	{CON_EVENT_FD , sizeof(state_info)/sizeof(state_info[0]), state_info},
 };
 
 static connection *connections_get_new_connection(server *srv) {
@@ -160,6 +168,8 @@ static connection *connections_get_new_connection(server *srv) {
 
 static int connection_del(server *srv, connection *con) {
 	size_t i;
+	connection_state_machine_exit(srv, con);
+
 	connections *conns = srv->conns;
 	connection *temp;
 
@@ -664,9 +674,7 @@ connection *connection_init(server *srv) {
 	force_assert(NULL != con->cond_cache);
 	config_setup_connection(srv, con);
 
-	con->state_machine = state_manager_new(sizeof(state_info)/sizeof(state_info[0]), state_info);
-	state_manager_set_state(con->state_machine, CON_STATE_CONNECT);
-	state_manager_show(con->state_machine);
+	connection_state_machine_init(srv, con);
 	return con;
 }
 
@@ -1492,15 +1500,15 @@ connection *connection_accepted(server *srv, server_socket *srv_socket, sock_add
 		return con;
 }
 
-void connection_state_machine_init(server *srv) {
-	UNUSED(srv);
-//	srv->state_machine = state_manager_new(sizeof(state_info)/sizeof(state_info[0]), state_info);
-//	state_manager_show(srv->state_machine);
+static void connection_state_machine_init(server *srv, connection *con) {
+	con->state_machine = state_machine_new(sizeof(state_event)/sizeof(state_event[0]), state_event, srv->threadpool);
+	state_machine_set_state(con->state_machine, CON_STATE_CONNECT);
+	state_machine_show(con->state_machine);
 }
 
-void connection_state_machine_exit(server *srv) {
+void connection_state_machine_exit(server *srv, connection *con) {
 	UNUSED(srv);
-//	state_manager_free(srv->state_machine);
+	state_machine_free(con->state_machine);
 }
 
 int connection_state_machine(server *srv, connection *con) {
@@ -1513,7 +1521,6 @@ int connection_state_machine(server *srv, connection *con) {
 
 	fprintf(stderr, "call connection_state_machine\n");
 	http_connection_t http_con ={srv, con, connection_get_ostate(con)};
-	state_manager_show(con->state_machine);
-	state_manager_call(con->state_machine, &http_con);
+	state_machine_call_event(con->state_machine, CON_EVENT_RUN, &http_con, NULL);
 	return 0;
 }
