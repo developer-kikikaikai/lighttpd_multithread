@@ -16035,7 +16035,7 @@ $as_echo_n "checking for OpenSSL... " >&6; }
 if test "${with_openssl+set}" = set; then :
   withval=$with_openssl; WITH_OPENSSL=$withval
 else
-  WITH_OPENSSL=no
+  WITH_OPENSSL=yes
 
 fi
 

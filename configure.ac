@@ -576,7 +576,7 @@ AC_ARG_WITH([openssl],
     [Include openssl support (default no)]
   )],
   [WITH_OPENSSL=$withval],
-  [WITH_OPENSSL=no]
+  [WITH_OPENSSL=yes]
 )
 AC_MSG_RESULT([$WITH_OPENSSL])
 
