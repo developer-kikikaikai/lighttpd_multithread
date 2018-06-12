@@ -46,6 +46,7 @@ static int connection_handle_response_start_state(server *srv, connection *con);
 static int connection_handle_connect_state(server *srv, connection *con);
 static int connection_handle_write_state(server *srv, connection *con);
 static int connection_handle_read_state(server *srv, connection *con);
+static void connection_handle_fdevent_set(server *srv, connection *con);
 
 static inline int connection_get_ostate(connection *con) {
 	return (con->state==CON_STATE_READ_POST)?CON_STATE_HANDLE_REQUEST:con->state;
@@ -53,11 +54,28 @@ static inline int connection_get_ostate(connection *con) {
 
 static int connection_handle_base(int (*handle)(server *srv, connection *con), void * arg) {
 http_connection_t * http_con = (http_connection_t *)arg;
+	if (http_con->srv->srvconf.log_state_handling) {
+		log_error_write(http_con->srv, __FILE__, __LINE__, "sds",
+				"state at start",
+				http_con->con->fd,
+				connection_get_state(http_con->con->state));
+	}
+
 	if( handle(http_con->srv, http_con->con) == -1 || http_con->ostate != state_manager_get_current_state(http_con->con->state_machine) ) {
 		
 		http_con->ostate = connection_get_ostate(http_con->con);
 		return state_manager_call(http_con->con->state_machine, arg);
 	}
+
+	fprintf(stderr, "comeback connection_state_machine\n");
+	if (http_con->srv->srvconf.log_state_handling) {
+		log_error_write(http_con->srv, __FILE__, __LINE__, "sds",
+				"state at exit:",
+				http_con->con->fd,
+				connection_get_state(http_con->con->state));
+	}
+
+	connection_handle_fdevent_set(http_con->srv, http_con->con);
 	return 0;
 }
 
@@ -1497,15 +1515,5 @@ int connection_state_machine(server *srv, connection *con) {
 	http_connection_t http_con ={srv, con, connection_get_ostate(con)};
 	state_manager_show(con->state_machine);
 	state_manager_call(con->state_machine, &http_con);
-
-	fprintf(stderr, "comeback connection_state_machine\n");
-	if (srv->srvconf.log_state_handling) {
-		log_error_write(srv, __FILE__, __LINE__, "sds",
-				"state at exit:",
-				con->fd,
-				connection_get_state(con->state));
-	}
-
-	connection_handle_fdevent_set(srv, con);
 	return 0;
 }
