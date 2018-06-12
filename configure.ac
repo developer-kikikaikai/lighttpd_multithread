@@ -1058,10 +1058,6 @@ AC_SUBST([CRYPT_LIB])
 AC_MSG_CHECKING([crypt_r/crypt support])
 AC_MSG_RESULT([$found_crypt])
 
-dnl check whether main needs -lstate_manager
-AC_SEARCH_LIBS([state_manager_new], [state_manager])
-AC_SEARCH_LIBS([dputil_list_push], [dputil])
-
 dnl check whether sendfilev needs -lsendfile
 AC_MSG_NOTICE([----------------------------------------])
 save_LIBS=$LIBS
@@ -1222,6 +1218,24 @@ if test "$ipv6" = true; then
     AC_MSG_ERROR([IPv6 seems broken.  Fix it or build with --disable-ipv6])
   fi
 fi
+
+dnl check whether main needs -lstate_manager
+AC_SEARCH_LIBS([state_manager_new], [state_manager])
+
+dnl Check for dpfc
+AC_MSG_NOTICE([----------------------------------------])
+AC_MSG_CHECKING([for SateMachine])
+AC_ARG_WITH([statemachine],
+  [AC_HELP_STRING([--with-statemachine=DIR],
+    [Add include state machine dir (default /usr/local/)]
+  )],
+  [WITH_STATEMACHINE=$withval],
+  [WITH_STATEMACHINE="/usr/local"]
+)
+AC_MSG_RESULT([$WITH_STATEMACHINE])
+
+CPPFLAGS="${CPPFLAGS} -I$WITH_STATEMACHINE/include"
+LDFLAGS="${LDFLAGS} -Xlinker -rpath -Xlinker $WITH_STATEMACHINE/lib"
 
 # disable mmap by default
 # lighttpd may always use mmap with files it owns (created tmp files)

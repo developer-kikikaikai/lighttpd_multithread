@@ -873,6 +873,7 @@ with_memcached
 with_lua
 enable_lfs
 enable_ipv6
+with_statemachine
 enable_mmap
 enable_extra_warnings
 '
@@ -1593,6 +1594,7 @@ Optional Packages:
   --with-geoip            IP-based geolocation lookup
   --with-memcached        memcached storage for mod_trigger_b4_dl/mod_cml
   --with-lua              lua engine for mod_magnet/mod_cml
+  --with-statemachine=DIR Add include state machine dir (default /usr/local/)
 
 Some influential environment variables:
   CC          C compiler command
@@ -17688,119 +17690,6 @@ $as_echo_n "checking crypt_r/crypt support... " >&6; }
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $found_crypt" >&5
 $as_echo "$found_crypt" >&6; }
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing state_manager_new" >&5
-$as_echo_n "checking for library containing state_manager_new... " >&6; }
-if ${ac_cv_search_state_manager_new+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_func_search_save_LIBS=$LIBS
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char state_manager_new ();
-int
-main ()
-{
-return state_manager_new ();
-  ;
-  return 0;
-}
-_ACEOF
-for ac_lib in '' state_manager; do
-  if test -z "$ac_lib"; then
-    ac_res="none required"
-  else
-    ac_res=-l$ac_lib
-    LIBS="-l$ac_lib  $ac_func_search_save_LIBS"
-  fi
-  if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_search_state_manager_new=$ac_res
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext
-  if ${ac_cv_search_state_manager_new+:} false; then :
-  break
-fi
-done
-if ${ac_cv_search_state_manager_new+:} false; then :
-
-else
-  ac_cv_search_state_manager_new=no
-fi
-rm conftest.$ac_ext
-LIBS=$ac_func_search_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_state_manager_new" >&5
-$as_echo "$ac_cv_search_state_manager_new" >&6; }
-ac_res=$ac_cv_search_state_manager_new
-if test "$ac_res" != no; then :
-  test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
-
-fi
-
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing dputil_list_push" >&5
-$as_echo_n "checking for library containing dputil_list_push... " >&6; }
-if ${ac_cv_search_dputil_list_push+:} false; then :
-  $as_echo_n "(cached) " >&6
-else
-  ac_func_search_save_LIBS=$LIBS
-cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-
-/* Override any GCC internal prototype to avoid an error.
-   Use char because int might match the return type of a GCC
-   builtin and then its argument prototype would still apply.  */
-#ifdef __cplusplus
-extern "C"
-#endif
-char dputil_list_push ();
-int
-main ()
-{
-return dputil_list_push ();
-  ;
-  return 0;
-}
-_ACEOF
-for ac_lib in '' dputil; do
-  if test -z "$ac_lib"; then
-    ac_res="none required"
-  else
-    ac_res=-l$ac_lib
-    LIBS="-l$ac_lib  $ac_func_search_save_LIBS"
-  fi
-  if ac_fn_c_try_link "$LINENO"; then :
-  ac_cv_search_dputil_list_push=$ac_res
-fi
-rm -f core conftest.err conftest.$ac_objext \
-    conftest$ac_exeext
-  if ${ac_cv_search_dputil_list_push+:} false; then :
-  break
-fi
-done
-if ${ac_cv_search_dputil_list_push+:} false; then :
-
-else
-  ac_cv_search_dputil_list_push=no
-fi
-rm conftest.$ac_ext
-LIBS=$ac_func_search_save_LIBS
-fi
-{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_dputil_list_push" >&5
-$as_echo "$ac_cv_search_dputil_list_push" >&6; }
-ac_res=$ac_cv_search_dputil_list_push
-if test "$ac_res" != no; then :
-  test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
-
-fi
-
-
 { $as_echo "$as_me:${as_lineno-$LINENO}: ----------------------------------------" >&5
 $as_echo "$as_me: ----------------------------------------" >&6;}
 save_LIBS=$LIBS
@@ -18144,6 +18033,82 @@ $as_echo "#define HAVE_IPV6 1" >>confdefs.h
     as_fn_error $? "IPv6 seems broken.  Fix it or build with --disable-ipv6" "$LINENO" 5
   fi
 fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for library containing state_manager_new" >&5
+$as_echo_n "checking for library containing state_manager_new... " >&6; }
+if ${ac_cv_search_state_manager_new+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_func_search_save_LIBS=$LIBS
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char state_manager_new ();
+int
+main ()
+{
+return state_manager_new ();
+  ;
+  return 0;
+}
+_ACEOF
+for ac_lib in '' state_manager; do
+  if test -z "$ac_lib"; then
+    ac_res="none required"
+  else
+    ac_res=-l$ac_lib
+    LIBS="-l$ac_lib  $ac_func_search_save_LIBS"
+  fi
+  if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_search_state_manager_new=$ac_res
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext
+  if ${ac_cv_search_state_manager_new+:} false; then :
+  break
+fi
+done
+if ${ac_cv_search_state_manager_new+:} false; then :
+
+else
+  ac_cv_search_state_manager_new=no
+fi
+rm conftest.$ac_ext
+LIBS=$ac_func_search_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_search_state_manager_new" >&5
+$as_echo "$ac_cv_search_state_manager_new" >&6; }
+ac_res=$ac_cv_search_state_manager_new
+if test "$ac_res" != no; then :
+  test "$ac_res" = "none required" || LIBS="$ac_res $LIBS"
+
+fi
+
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: ----------------------------------------" >&5
+$as_echo "$as_me: ----------------------------------------" >&6;}
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for SateMachine" >&5
+$as_echo_n "checking for SateMachine... " >&6; }
+
+# Check whether --with-statemachine was given.
+if test "${with_statemachine+set}" = set; then :
+  withval=$with_statemachine; WITH_STATEMACHINE=$withval
+else
+  WITH_STATEMACHINE="/usr/local"
+
+fi
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $WITH_STATEMACHINE" >&5
+$as_echo "$WITH_STATEMACHINE" >&6; }
+
+CPPFLAGS="${CPPFLAGS} -I$WITH_STATEMACHINE/include"
+LDFLAGS="${LDFLAGS} -Xlinker -rpath -Xlinker $WITH_STATEMACHINE/lib"
 
 # disable mmap by default
 # lighttpd may always use mmap with files it owns (created tmp files)

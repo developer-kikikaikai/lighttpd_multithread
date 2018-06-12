@@ -1404,9 +1404,7 @@ hdr = server.h base64.h buffer.h network.h log.h keyvalue.h \
 @LIGHTTPD_STATIC_TRUE@	$(am__append_29) $(am__append_32) \
 @LIGHTTPD_STATIC_TRUE@	$(am__append_34) $(am__append_36) \
 @LIGHTTPD_STATIC_TRUE@	$(am__append_37)
-#Please update path of state_machine
-@LIGHTTPD_STATIC_FALSE@lighttpd_LDFLAGS = -export-dynamic -Xlinker \
-@LIGHTTPD_STATIC_FALSE@	-rpath -Xlinker /usr/local/lib/
+@LIGHTTPD_STATIC_FALSE@lighttpd_LDFLAGS = -export-dynamic
 @LIGHTTPD_STATIC_TRUE@lighttpd_LDFLAGS = -export-dynamic
 proc_open_SOURCES = proc_open.c buffer.c
 proc_open_LDADD = $(LIBUNWIND_LIBS)
