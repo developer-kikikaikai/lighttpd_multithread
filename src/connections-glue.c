@@ -45,10 +45,10 @@ const char *connection_get_short_state(connection_state_t state) {
 
 int connection_set_state(server *srv, connection *con, connection_state_t state) {
 
+	UNUSED(srv);
 	con->state = state;
-	fprintf(stderr, "change state\n");
 	state_machine_set_state(con->state_machine, state);
-	state_machine_show(con->state_machine);
+	//state_machine_show(con->state_machine);
 	return 0;
 }
 

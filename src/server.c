@@ -967,6 +967,8 @@ static int server_main (server * const srv, int argc, char **argv) {
 	i_am_root = (0 == getuid());
 #endif
 
+	srv->tid = pthread_self();
+
 	/* initialize globals (including file-scoped static globals) */
 	oneshot_fd = 0;
 	srv_shutdown = 0;
@@ -1948,39 +1950,15 @@ static int server_main (server * const srv, int argc, char **argv) {
 		}
 
 		/* we still have some fds to share */
-		if (srv->want_fds) {
-			/* check the fdwaitqueue for waiting fds */
-			int free_fds = srv->max_fds - server_get_cur_fds() - 16;
-			connection *con;
-
-			for (; free_fds > 0 && NULL != (con = fdwaitqueue_unshift(srv, srv->fdwaitqueue)); free_fds--) {
-				connection_state_machine(srv, con);
-
-				srv->want_fds--;
-			}
-		}
+		fdwaitqueue_call(srv);
 
 		if ((n = fdevent_poll(srv->ev, 1000)) > 0) {
 			/* n is the number of events */
-			int fd;
-			int revents;
-			int fd_ndx;
+			int fd_ndx = -1;
 			last_active_ts = cur_ts;
-			fd_ndx = -1;
 			do {
-				fdevent_handler handler;
-				void *context;
-
-				fd_ndx  = fdevent_event_next_fdndx (srv->ev, fd_ndx);
+				fd_ndx = fdevent_call(srv);
 				if (-1 == fd_ndx) break; /* not all fdevent handlers know how many fds got an event */
-
-				revents = fdevent_event_get_revent (srv->ev, fd_ndx);
-				fd      = fdevent_event_get_fd     (srv->ev, fd_ndx);
-				handler = fdevent_get_handler(srv->ev, fd);
-				context = fdevent_get_context(srv->ev, fd);
-				if (NULL != handler) {
-					(*handler)(srv, context, revents);
-				}
 			} while (--n > 0);
 		} else if (n < 0 && errno != EINTR) {
 			log_error_write(srv, __FILE__, __LINE__, "ss",
@@ -1990,12 +1968,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 
 		if (n >= 0) fdevent_sched_run(srv, srv->ev);
 
-		for (ndx = 0; ndx < srv->joblist->used; ndx++) {
-			connection *con = srv->joblist->ptr[ndx];
-			connection_state_machine(srv, con);
-		}
-
-		srv->joblist->used = 0;
+		joblist_call(srv);
 	}
 
 	if (graceful_shutdown || graceful_restart) {

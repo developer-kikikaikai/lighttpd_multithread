@@ -142,6 +142,8 @@ struct fdevents {
     int (*event_next_fdndx)(struct fdevents *ev, int ndx);
 
     int (*poll)(struct fdevents *ev, int timeout_ms);
+    int reg_evefd;
+    int reg_ndx;
 };
 
 int fdevent_select_init(struct fdevents *ev);

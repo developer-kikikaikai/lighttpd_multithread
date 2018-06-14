@@ -64,7 +64,6 @@ http_connection_t * http_con = (http_connection_t *)arg;
 	}
 
 	if( handle(http_con->srv, http_con->con) == -1 || http_con->ostate != (int)http_con->con->state ) {
-		
 		http_con->ostate = http_con->con->state;
 		return state_machine_call_event_directry(http_con->con->state_machine, CON_EVENT_RUN, arg);
 	}
@@ -167,8 +166,8 @@ static connection *connections_get_new_connection(server *srv) {
 }
 
 static int connection_del(server *srv, connection *con) {
+	fprintf(stderr,"%s\n", __func__);
 	size_t i;
-	connection_state_machine_exit(srv, con);
 
 	connections *conns = srv->conns;
 	connection *temp;
@@ -614,6 +613,7 @@ static int connection_handle_write(server *srv, connection *con) {
 
 
 connection *connection_init(server *srv) {
+	fprintf(stderr,"%s\n", __func__);
 	connection *con;
 
 	UNUSED(srv);
@@ -674,7 +674,6 @@ connection *connection_init(server *srv) {
 	force_assert(NULL != con->cond_cache);
 	config_setup_connection(srv, con);
 
-	connection_state_machine_init(srv, con);
 	return con;
 }
 
@@ -726,6 +725,7 @@ void connections_free(server *srv) {
 		free(con->plugin_ctx);
 		free(con->cond_cache);
 
+		connection_state_machine_exit(srv, con);
 		free(con);
 	}
 
@@ -1470,6 +1470,7 @@ connection *connection_accepted(server *srv, server_socket *srv_socket, sock_add
 #endif
 		con = connections_get_new_connection(srv);
 
+		connection_state_machine_init(srv, con);
 		con->fd = cnt;
 		con->fde_ndx = -1;
 		fdevent_register(srv->ev, con->fd, connection_handle_fdevent, con);
@@ -1501,9 +1502,10 @@ connection *connection_accepted(server *srv, server_socket *srv_socket, sock_add
 }
 
 static void connection_state_machine_init(server *srv, connection *con) {
-	con->state_machine = state_machine_new(sizeof(state_event)/sizeof(state_event[0]), state_event, srv->threadpool);
-	state_machine_set_state(con->state_machine, CON_STATE_CONNECT);
-	state_machine_show(con->state_machine);
+	if(!con->state_machine) {
+		con->state_machine = state_machine_new(sizeof(state_event)/sizeof(state_event[0]), state_event, srv->threadpool);
+		state_machine_set_state(con->state_machine, CON_STATE_CONNECT);
+	}
 }
 
 void connection_state_machine_exit(server *srv, connection *con) {
@@ -1520,7 +1522,8 @@ int connection_state_machine(server *srv, connection *con) {
 	}
 
 	fprintf(stderr, "call connection_state_machine\n");
-	http_connection_t http_con ={srv, con, connection_get_ostate(con)};
-	state_machine_call_event(con->state_machine, CON_EVENT_RUN, &http_con, NULL);
+	http_connection_t http_con ={.srv=srv, .con=con, .ostate=connection_get_ostate(con)};
+	state_machine_call_event(con->state_machine, CON_EVENT_RUN, &http_con, sizeof(http_con), NULL);
+	fprintf(stderr, "called connection_state_machine\n");
 	return 0;
 }

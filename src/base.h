@@ -27,6 +27,7 @@
 #include "etag.h"
 #include <state_machine.h>
 #include <event_threadpool.h>
+#include <pthread.h>
 
 struct fdevents;        /* declaration */
 struct stat_cache;      /* declaration */
@@ -569,6 +570,7 @@ struct server {
 	uid_t uid;
 	gid_t gid;
 	pid_t pid;
+	pthread_t tid;
 };
 
 
