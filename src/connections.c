@@ -50,6 +50,12 @@ static void connection_handle_fdevent_set(server *srv, connection *con);
 static void connection_state_machine_init(server *srv, connection *con);
 static void connection_state_machine_exit(server *srv, connection *con);
 
+static handler_t connections_del_cb(server *srv, void *ctx, int revents);
+static void connections_del_event_register(server *srv, connection *con);
+static void connections_del_event_unregister(server *srv, connection *con);
+static void connection_del_event(server *srv, connection *con);
+static int connection_del(server *srv, connection *con);
+
 static inline int connection_get_ostate(connection *con) {
 	return (con->state==CON_STATE_READ_POST)?CON_STATE_HANDLE_REQUEST:con->state;
 }
@@ -129,6 +135,43 @@ static const state_event_info_t state_event[] = {
 	{CON_EVENT_RUN, sizeof(state_info)/sizeof(state_info[0]), state_info},
 	{CON_EVENT_FD , sizeof(state_info)/sizeof(state_info[0]), state_info},
 };
+
+static handler_t connections_del_cb(server *srv, void *ctx, int revents) {
+	UNUSED(revents);
+	fprintf(stderr, "%s enter\n", __func__);
+	connection *con = (connection *)ctx;
+	eventfd_t cnt=0;
+	eventfd_read(con->eventfd, &cnt);
+	connection_del(srv, con);
+	con->close_call=0;
+	return HANDLER_GO_ON;
+}
+
+static void connections_del_event_register(server *srv, connection *con) {
+	con->eventfd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+	force_assert(con->eventfd != -1);
+
+	fdevent_register(srv->ev, con->eventfd, connections_del_cb, con);
+	con->fdevent_ndx=-1;
+	fdevent_event_set(srv->ev, &con->fdevent_ndx, con->eventfd, FDEVENT_IN);
+	con->close_call = 0;
+}
+
+static void connections_del_event_unregister(server *srv, connection *con) {
+	fdevent_event_del(srv->ev, &con->fdevent_ndx, con->eventfd);
+	fdevent_unregister(srv->ev, con->eventfd);
+	close(con->eventfd);
+}
+
+static void connection_del_event(server *srv, connection *con) {
+	fprintf(stderr, "%s enter\n", __func__);
+	UNUSED(srv);
+	if(!con->close_call) {
+		fprintf(stderr, "%s write\n", __func__);
+		con->close_call++;
+		eventfd_write(con->eventfd, con->close_call);
+	}
+}
 
 static connection *connections_get_new_connection(server *srv) {
 	connections *conns = srv->conns;
@@ -245,9 +288,8 @@ static int connection_close(server *srv, connection *con) {
 		con->plugin_ctx[pd->id] = NULL;
 	}
 
-	connection_del(srv, con);
+	connection_del_event(srv, con);
 	connection_set_state(srv, con, CON_STATE_CONNECT);
-
 	return 0;
 }
 
@@ -674,6 +716,7 @@ connection *connection_init(server *srv) {
 	force_assert(NULL != con->cond_cache);
 	config_setup_connection(srv, con);
 
+	connections_del_event_register(srv, con);
 	return con;
 }
 
@@ -725,6 +768,7 @@ void connections_free(server *srv) {
 		free(con->plugin_ctx);
 		free(con->cond_cache);
 
+		connections_del_event_unregister(srv, con);
 		connection_state_machine_exit(srv, con);
 		free(con);
 	}

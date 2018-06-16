@@ -28,6 +28,7 @@
 #include <state_machine.h>
 #include <event_threadpool.h>
 #include <pthread.h>
+#include <sys/eventfd.h>
 
 struct fdevents;        /* declaration */
 struct stat_cache;      /* declaration */
@@ -409,6 +410,9 @@ struct connection {
 
 	int conditional_is_valid[COMP_LAST_ELEMENT]; 
 	StateMachineInfo state_machine;
+	int eventfd;
+	int fdevent_ndx;
+	eventfd_t close_call;
 };
 
 typedef struct {

@@ -281,7 +281,8 @@ fdevents *fdevent_init(server *srv) {
 		goto error;
 	}
 
-	ev->reg_evefd = eventfd(0, 0);
+	/*add register event handle to running loop */
+	ev->reg_evefd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK );
 
 	fdevent_register(ev, ev->reg_evefd, fd_registrer_handler, NULL);
 	ev->reg_ndx = -1;
