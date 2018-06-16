@@ -71,7 +71,7 @@ http_connection_t * http_con = (http_connection_t *)arg;
 
 	if( handle(http_con->srv, http_con->con) == -1 || http_con->ostate != (int)http_con->con->state ) {
 		http_con->ostate = http_con->con->state;
-		return state_machine_call_event_directry(http_con->con->state_machine, CON_EVENT_RUN, arg);
+		return state_machine_call_event(http_con->con->state_machine, CON_EVENT_RUN, arg, 0, NULL);
 	}
 
 	fprintf(stderr, "comeback connection_state_machine\n");
