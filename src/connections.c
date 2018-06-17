@@ -69,6 +69,7 @@ http_connection_t * http_con = (http_connection_t *)arg;
 				connection_get_state(http_con->con->state));
 	}
 
+	fprintf(stderr, "%s state %s\n", __func__, connection_get_state(http_con->con->state));
 	if( handle(http_con->srv, http_con->con) == -1 || http_con->ostate != (int)http_con->con->state ) {
 		http_con->ostate = http_con->con->state;
 		return state_machine_call_event(http_con->con->state_machine, CON_EVENT_RUN, arg, 0, NULL);
@@ -288,6 +289,7 @@ static int connection_close(server *srv, connection *con) {
 
 	connection_del_event(srv, con);
 	connection_set_state(srv, con, CON_STATE_CONNECT);
+	//add joblist to run state_machine
 	return 0;
 }
 
@@ -713,6 +715,7 @@ connection *connection_init(server *srv) {
 	force_assert(NULL != con->cond_cache);
 	config_setup_connection(srv, con);
 
+	connection_state_machine_init(srv, con);
 	connections_del_event_register(srv, con);
 	return con;
 }
@@ -725,6 +728,9 @@ void connections_free(server *srv) {
 
 	for (i = 0; i < conns->size; i++) {
 		connection *con = conns->ptr[i];
+
+		connection_state_machine_exit(srv, con);
+		connections_del_event_unregister(srv, con);
 
 		connection_reset(srv, con);
 
@@ -765,8 +771,6 @@ void connections_free(server *srv) {
 		free(con->plugin_ctx);
 		free(con->cond_cache);
 
-		connections_del_event_unregister(srv, con);
-		connection_state_machine_exit(srv, con);
 		free(con);
 	}
 
@@ -777,6 +781,7 @@ void connections_free(server *srv) {
 
 
 int connection_reset(server *srv, connection *con) {
+	fprintf(stderr, "%s\n", __func__);
 	plugins_call_connection_reset(srv, con);
 
 	connection_response_reset(srv, con);
@@ -851,6 +856,7 @@ int connection_reset(server *srv, connection *con) {
 }
 
 static int connection_handle_request_start_state(server *srv, connection *con) {
+	fprintf(stderr, "request start, thread:%x, con=%p\n", pthread_self(), con);
 	con->request_start = server_get_cur_ts();
 	con->read_idle_ts = con->request_start;
 	if (con->conf.high_precision_timestamps)
@@ -1508,7 +1514,6 @@ connection *connection_accepted(server *srv, server_socket *srv_socket, sock_add
 #endif
 		con = connections_get_new_connection(srv);
 
-		connection_state_machine_init(srv, con);
 		con->fd = cnt;
 		con->fde_ndx = -1;
 		fdevent_register(srv->ev, con->fd, connection_handle_fdevent, con);

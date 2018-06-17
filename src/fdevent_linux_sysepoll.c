@@ -38,8 +38,7 @@ static int fdevent_linux_sysepoll_event_del(fdevents *ev, int fde_ndx, int fd) {
 	if (0 != epoll_ctl(ev->epoll_fd, EPOLL_CTL_DEL, fd, &ep)) {
 		log_error_write(ev->srv, __FILE__, __LINE__, "SSS",
 			"epoll_ctl failed: ", strerror(errno), ", dying");
-
-		SEGFAULT();
+		//SEGFAULT();
 
 		return 0;
 	}
