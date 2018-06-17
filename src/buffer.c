@@ -1086,7 +1086,8 @@ static void print_backtrace(FILE *file) {
 	UNUSED(file);
 }
 #endif
-
+#include <sys/types.h> 
+#include <unistd.h>
 void log_failed_assert(const char *filename, unsigned int line, const char *msg) {
 	/* can't use buffer here; could lead to recursive assertions */
 	fprintf(stderr, "%s.%u: %s\n", filename, line, msg);

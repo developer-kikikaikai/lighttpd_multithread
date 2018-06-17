@@ -37,7 +37,7 @@ static inline void fdevent_event_add_self(fdevents *ev, int *fde_ndx, int fd, in
 static inline void fdevent_event_clr_self(fdevents *ev, int *fde_ndx, int fd, int event);
 
 static inline void fdevent_write(fdevents *ev) {
-	eventfd_write(ev->reg_evefd, 1);
+//	eventfd_write(ev->reg_evefd, 1);
 }
 
 //if use function only server, don't need to lock
@@ -339,7 +339,8 @@ static void fdnode_free(fdnode *fdn) {
 	free(fdn);
 }
 
-int fdevent_register(fdevents *ev, int fd, fdevent_handler handler, void *ctx) {
+int fdevent_register_(const char *func, fdevents *ev, int fd, fdevent_handler handler, void *ctx) {
+	fprintf(stderr, "(from %s)%s add %d\n", func, __func__, fd);
 	fdnode *fdn;
 
 	fdn = fdnode_init();
@@ -360,9 +361,10 @@ EVE_UNLOCK
 	return 0;
 }
 
-int fdevent_unregister(fdevents *ev, int fd) {
+int fdevent_unregister_(const char *func, fdevents *ev, int fd) {
 	if (!ev) return 0;
 
+	fprintf(stderr, "(from %s)%s remove %d\n", func, __func__, fd);
 EVE_LOCK
 	fdevent_unregister_self(ev, fd);
 EVE_UNLOCK
@@ -433,15 +435,17 @@ EVE_UNLOCK
 }
 
 static void fdevent_event_del_self(fdevents *ev, int *fde_ndx, int fd) {
+	if (ev->fdarray[fd] == NULL){fprintf(stderr, "%s maybe %d is already unregistered\n",__func__, fd); return;}
 	if ((uintptr_t)ev->fdarray[fd] & 0x3) return;
 
 	if (ev->event_del) *fde_ndx = ev->event_del(ev, *fde_ndx, fd);
 	ev->fdarray[fd]->events = 0;
 }
 
-void fdevent_event_del(fdevents *ev, int *fde_ndx, int fd) {
+void fdevent_event_del_(const char *func, fdevents *ev, int *fde_ndx, int fd) {
 	if (-1 == fd) return;
 EVE_LOCK
+	fprintf(stderr, "(from %s)%s del %d\n", func, __func__, fd);
 	fdevent_event_del_self(ev, fde_ndx, fd);
 EVE_UNLOCK
 }
@@ -518,6 +522,7 @@ EVE_LOCK
 	revents = fdevent_event_get_revent (srv->ev, fd_ndx);
 	fd      = fdevent_event_get_fd     (srv->ev, fd_ndx);
 	handler = fdevent_get_handler(srv->ev, fd);
+	if(NULL == handler) goto end;
 	context = fdevent_get_context(srv->ev, fd);
 //to care call register API in handler
 end:
@@ -541,7 +546,8 @@ static int fdevent_event_get_fd(fdevents *ev, size_t ndx) {
 }
 
 fdevent_handler fdevent_get_handler(fdevents *ev, int fd) {
-	if (ev->fdarray[fd] == NULL) SEGFAULT();
+	//there is a case to unregister fdarray
+	if (ev->fdarray[fd] == NULL){fprintf(stderr, "%s maybe %d is already unregistered\n",__func__, fd); return NULL;}
 	if ((uintptr_t)ev->fdarray[fd] & 0x3) return NULL;
 	if (ev->fdarray[fd]->fd != fd) SEGFAULT();
 

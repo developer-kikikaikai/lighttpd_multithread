@@ -74,7 +74,6 @@ http_connection_t * http_con = (http_connection_t *)arg;
 		return state_machine_call_event(http_con->con->state_machine, CON_EVENT_RUN, arg, 0, NULL);
 	}
 
-	fprintf(stderr, "comeback connection_state_machine\n");
 	if (http_con->srv->srvconf.log_state_handling) {
 		log_error_write(http_con->srv, __FILE__, __LINE__, "sds",
 				"state at exit:",
@@ -138,7 +137,6 @@ static const state_event_info_t state_event[] = {
 
 static handler_t connections_del_cb(server *srv, void *ctx, int revents) {
 	UNUSED(revents);
-	fprintf(stderr, "%s enter\n", __func__);
 	connection *con = (connection *)ctx;
 	eventfd_t cnt=0;
 	eventfd_read(con->eventfd, &cnt);
@@ -164,10 +162,8 @@ static void connections_del_event_unregister(server *srv, connection *con) {
 }
 
 static void connection_del_event(server *srv, connection *con) {
-	fprintf(stderr, "%s enter\n", __func__);
 	UNUSED(srv);
 	if(!con->close_call) {
-		fprintf(stderr, "%s write\n", __func__);
 		con->close_call++;
 		eventfd_write(con->eventfd, con->close_call);
 	}
@@ -209,7 +205,6 @@ static connection *connections_get_new_connection(server *srv) {
 }
 
 static int connection_del(server *srv, connection *con) {
-	fprintf(stderr,"%s\n", __func__);
 	size_t i;
 
 	connections *conns = srv->conns;
@@ -251,10 +246,12 @@ static int connection_del(server *srv, connection *con) {
 }
 
 static int connection_close(server *srv, connection *con) {
-	if (con->fd < 0) con->fd = -con->fd;
+	int fd = con->fd;
+	if (con->fd < 0){fprintf(stderr, "%s decrement fd\n", __func__) ;con->fd = -con->fd;}
 
 	plugins_call_handle_connection_close(srv, con);
 
+	if(0 < fd) {
 	fdevent_event_del(srv->ev, &(con->fde_ndx), con->fd);
 	fdevent_unregister(srv->ev, con->fd);
 #ifdef __WIN32
@@ -275,6 +272,7 @@ static int connection_close(server *srv, connection *con) {
 	if (srv->srvconf.log_state_handling) {
 		log_error_write(srv, __FILE__, __LINE__, "sd",
 				"connection closed for fd", con->fd);
+	}
 	}
 	con->fd = -1;
 
@@ -655,7 +653,6 @@ static int connection_handle_write(server *srv, connection *con) {
 
 
 connection *connection_init(server *srv) {
-	fprintf(stderr,"%s\n", __func__);
 	connection *con;
 
 	UNUSED(srv);
@@ -1027,7 +1024,6 @@ static int connection_handle_connect_state(server *srv, connection *con) {
 static int connection_handle_write_state(server *srv, connection *con) {
 	int r=0;
 	do {
-		fprintf(stderr, "loop connection_handle_write_state\n");
 		/* only try to write if we have something in the queue */
 		if (!chunkqueue_is_empty(con->write_queue)) {
 			if (con->is_writable) {
@@ -1046,7 +1042,6 @@ static int connection_handle_write_state(server *srv, connection *con) {
 		}
 
 		if (con->mode != DIRECT && !con->file_finished) {
-			fprintf(stderr, "call subrequest\n");
 			switch(r = plugins_call_handle_subrequest(srv, con)) {
 			case HANDLER_WAIT_FOR_EVENT:
 			case HANDLER_FINISHED:
@@ -1064,7 +1059,6 @@ static int connection_handle_write_state(server *srv, connection *con) {
 				connection_set_state(srv, con, CON_STATE_ERROR);
 				break;
 			}
-			fprintf(stderr, "call subrequest end\n");
 		}
 	} while (con->state == CON_STATE_WRITE && (!chunkqueue_is_empty(con->write_queue) ? con->is_writable : con->file_finished));
 	return 0;
@@ -1565,9 +1559,7 @@ int connection_state_machine(server *srv, connection *con) {
 				connection_get_state(con->state));
 	}
 
-	fprintf(stderr, "call connection_state_machine\n");
 	http_connection_t http_con ={.srv=srv, .con=con, .ostate=connection_get_ostate(con)};
 	state_machine_call_event(con->state_machine, CON_EVENT_RUN, &http_con, sizeof(http_con), NULL);
-	fprintf(stderr, "called connection_state_machine\n");
 	return 0;
 }

@@ -1952,7 +1952,6 @@ static int server_main (server * const srv, int argc, char **argv) {
 		/* we still have some fds to share */
 		fdwaitqueue_call(srv);
 
-		fprintf(stderr, "poll\n");
 		if ((n = fdevent_poll(srv->ev, 1000)) > 0) {
 			/* n is the number of events */
 			int fd_ndx = -1;
