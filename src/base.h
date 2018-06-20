@@ -27,6 +27,7 @@
 #include "etag.h"
 #include <state_machine.h>
 #include <event_threadpool.h>
+#include <memorypool.h>
 #include <pthread.h>
 #include <sys/eventfd.h>
 
@@ -542,12 +543,15 @@ struct server {
 	short int config_deprecated;
 	short int config_unsupported;
 
-	connections *conns;
 	connections *joblist;
 	connections *fdwaitqueue;
 
 	/* event pool for con */
 	EventTPoolManager threadpool;
+
+	/* pool data for con */
+	MemoryPool connspool;
+	size_t conns_used;
 
 	struct stat_cache *stat_cache;
 

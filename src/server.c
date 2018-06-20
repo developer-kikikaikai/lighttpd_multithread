@@ -266,9 +266,6 @@ static server *server_init(void) {
 
 	li_rand_reseed();
 
-	srv->conns = calloc(1, sizeof(*srv->conns));
-	force_assert(srv->conns);
-
 	srv->joblist = calloc(1, sizeof(*srv->joblist));
 	force_assert(srv->joblist);
 
@@ -338,8 +335,6 @@ static void server_free(server *srv) {
 	fdevent_unregister(srv->ev, srv->fd);
 #endif
 	fdevent_free(srv->ev);
-
-	free(srv->conns);
 
 	if (srv->config_storage) {
 		for (i = 0; i < srv->config_context->used; i++) {
@@ -881,9 +876,8 @@ static void server_sockets_close (server *srv) {
 }
 
 static void server_graceful_shutdown_maint (server *srv) {
-    connections *conns = srv->conns;
-    for (size_t ndx = 0; ndx < conns->used; ++ndx) {
-        connection * const con = conns->ptr[ndx];
+    connection * con;
+    FOR_ALL_CON(srv,con) {
         int changed = 0;
 
         if (con->state == CON_STATE_CLOSE) {
@@ -1625,6 +1619,8 @@ static int server_main (server * const srv, int argc, char **argv) {
 		return -1;
 	}
 
+	connection_pool_init(srv);
+
 	/* libev backend overwrites our SIGCHLD handler and calls waitpid on SIGCHLD; we want our own SIGCHLD handling. */
 #ifdef HAVE_SIGACTION
 	sigaction(SIGCHLD, &act, NULL);
@@ -1684,7 +1680,6 @@ static int server_main (server * const srv, int argc, char **argv) {
 	/* main-loop */
 	while (!srv_shutdown) {
 		int n;
-		size_t ndx;
 		time_t min_ts;
 		time_t cur_ts = server_get_cur_ts();
 
@@ -1737,7 +1732,6 @@ static int server_main (server * const srv, int argc, char **argv) {
 #ifdef DEBUG_CONNECTION_STATES
 				int cs = 0;
 #endif
-				connections *conns = srv->conns;
 				handler_t r;
 
 				switch(r = plugins_call_handle_trigger(srv)) {
@@ -1787,8 +1781,8 @@ static int server_main (server * const srv, int argc, char **argv) {
 				 * check all connections for timeouts
 				 *
 				 */
-				for (ndx = 0; ndx < conns->used; ndx++) {
-					connection * const con = conns->ptr[ndx];
+				connection * con;
+				FOR_ALL_CON(srv,con) {
 					const int waitevents = fdevent_event_get_interest(srv->ev, con->fd);
 					int changed = 0;
 					int t_diff;
@@ -1920,19 +1914,19 @@ static int server_main (server * const srv, int argc, char **argv) {
 			/* our server sockets are disabled, why ? */
 
 			if ((server_get_cur_fds() + srv->want_fds < srv->max_fds * 8 / 10) && /* we have enough unused fds */
-			    (srv->conns->used <= srv->max_conns * 9 / 10)) {
+			    (srv->conns_used <= srv->max_conns * 9 / 10)) {
 				server_sockets_set_event(srv, FDEVENT_IN);
 				log_error_write(srv, __FILE__, __LINE__, "s", "[note] sockets enabled again");
 
 				srv->sockets_disabled = 0;
 			}
 		} else {
-			if ((srv->conns->used >= srv->max_conns) || /* out of connections */
+			if ((srv->conns_used >= srv->max_conns) || /* out of connections */
 			    (server_get_cur_fds() + srv->want_fds > srv->max_fds * 9 / 10) ) { /* out of fds */
 				/* disable server-fds */
 				server_sockets_set_event(srv, 0);
 
-				if (srv->conns->used >= srv->max_conns) {
+				if (srv->conns_used >= srv->max_conns) {
 					log_error_write(srv, __FILE__, __LINE__, "s", "[note] sockets disabled, connection limit reached");
 				} else {
 					log_error_write(srv, __FILE__, __LINE__, "s", "[note] sockets disabled, out-of-fds");
@@ -1942,7 +1936,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 			}
 		}
 
-		if (graceful_shutdown && srv->conns->used == 0) {
+		if (graceful_shutdown && srv->conns_used == 0) {
 			/* we are in graceful shutdown phase and all connections are closed
 			 * we are ready to terminate without harming anyone */
 			srv_shutdown = 1;
@@ -1955,7 +1949,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 		if ((n = fdevent_poll(srv->ev, 1000)) > 0) {
 			/* n is the number of events */
 			int fd_ndx = -1;
-			last_active_ts = cur_ts;
+                        last_active_ts = cur_ts;
 			do {
 				fd_ndx = fdevent_call(srv);
 				if (-1 == fd_ndx) break; /* not all fdevent handlers know how many fds got an event */

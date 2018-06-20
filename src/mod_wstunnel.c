@@ -81,6 +81,7 @@
 #include <string.h>
 
 #include "gw_backend.h"
+#include "connections.h"
 
 #include "base.h"
 #include "array.h"
@@ -599,8 +600,8 @@ TRIGGER_FUNC(mod_wstunnel_handle_trigger) {
 
     gw_handle_trigger(srv, p_d);
 
-    for (size_t i = 0; i < srv->conns->used; ++i) {
-        connection *con = srv->conns->ptr[i];
+    connection *con;
+    FOR_ALL_CON(srv, con) {
         handler_ctx *hctx = con->plugin_ctx[p->id];
         if (NULL == hctx || con->mode != p->id)
             continue;

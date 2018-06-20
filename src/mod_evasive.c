@@ -7,6 +7,7 @@
 #include "sock_addr.h"
 
 #include "plugin.h"
+#include "connections.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -149,7 +150,6 @@ static int mod_evasive_patch_connection(server *srv, connection *con, plugin_dat
 URIHANDLER_FUNC(mod_evasive_uri_handler) {
 	plugin_data *p = p_d;
 	size_t conns_by_ip = 0;
-	size_t j;
 
 	if (buffer_is_empty(con->uri.path)) return HANDLER_GO_ON;
 
@@ -158,8 +158,8 @@ URIHANDLER_FUNC(mod_evasive_uri_handler) {
 	/* no limit set, nothing to block */
 	if (p->conf.max_conns == 0) return HANDLER_GO_ON;
 
-	for (j = 0; j < srv->conns->used; j++) {
-		connection *c = srv->conns->ptr[j];
+	connection *c;
+	FOR_ALL_CON(srv,c) {
 
 		/* check if other connections are already actively serving data for the same IP
 		 * we can only ban connections which are already behind the 'read request' state

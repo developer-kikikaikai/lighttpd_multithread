@@ -56,6 +56,10 @@ static void connections_del_event_unregister(server *srv, connection *con);
 static void connection_del_event(server *srv, connection *con);
 static int connection_del(server *srv, connection *con);
 
+static void connection_init(server *srv, connection *con);
+static inline int connection_is_init(connection *con);
+static void connection_pool_connection_init(server *srv, unsigned short size);
+
 static inline int connection_get_ostate(connection *con) {
 	return (con->state==CON_STATE_READ_POST)?CON_STATE_HANDLE_REQUEST:con->state;
 }
@@ -171,46 +175,25 @@ static void connection_del_event(server *srv, connection *con) {
 }
 
 static connection *connections_get_new_connection(server *srv) {
-	connections *conns = srv->conns;
-	size_t i;
+//	if(!srv->connspool) connection_pool_init(srv);
 
-	if (conns->size == 0) {
-		conns->size = srv->max_conns >= 128 ? 128 : srv->max_conns > 16 ? 16 : srv->max_conns;
-		conns->ptr = NULL;
-		conns->ptr = malloc(sizeof(*conns->ptr) * conns->size);
-		force_assert(NULL != conns->ptr);
-		for (i = 0; i < conns->size; i++) {
-			conns->ptr[i] = connection_init(srv);
-		}
-	} else if (conns->size == conns->used) {
-		conns->size += srv->max_conns >= 128 ? 128 : 16;
-		conns->ptr = realloc(conns->ptr, sizeof(*conns->ptr) * conns->size);
-		force_assert(NULL != conns->ptr);
+	connection * con = mpool_malloc(srv->connspool, sizeof(connection));
+	force_assert(con != NULL);
 
-		for (i = conns->used; i < conns->size; i++) {
-			conns->ptr[i] = connection_init(srv);
-		}
+	if(!connection_is_init(con)) {
+		connection_init(srv, con);
+		
+		connection_pool_connection_init(srv, srv->max_conns - srv->conns_used - 1 >= 128 ? 128 : srv->max_conns - srv->conns_used - 1 > 16 ? 16 : srv->max_conns - srv->conns_used - 1);
 	}
 
-	connection_reset(srv, conns->ptr[conns->used]);
-#if 0
-	fprintf(stderr, "%s.%d: add: ", __FILE__, __LINE__);
-	for (i = 0; i < conns->used + 1; i++) {
-		fprintf(stderr, "%d ", conns->ptr[i]->fd);
-	}
-	fprintf(stderr, "\n");
-#endif
+	connection_reset(srv, con);
 
-	conns->ptr[conns->used]->ndx = conns->used;
-	return conns->ptr[conns->used++];
+	con->ndx = srv->conns_used++;
+	return con;
 }
 
 static int connection_del(server *srv, connection *con) {
-	size_t i;
-
-	connections *conns = srv->conns;
-	connection *temp;
-
+	fprintf(stderr, "%s\n", __func__);
 	if (con == NULL) return -1;
 
 	if (-1 == con->ndx) return -1;
@@ -220,29 +203,11 @@ static int connection_del(server *srv, connection *con) {
 	buffer_reset(con->uri.query);
 	buffer_reset(con->request.orig_uri);
 
-	i = con->ndx;
-
 	/* not last element */
-
-	if (i != conns->used - 1) {
-		temp = conns->ptr[i];
-		conns->ptr[i] = conns->ptr[conns->used - 1];
-		conns->ptr[conns->used - 1] = temp;
-
-		conns->ptr[i]->ndx = i;
-		conns->ptr[conns->used - 1]->ndx = -1;
-	}
-
-	conns->used--;
+	mpool_free(srv->connspool, con);
+	srv->conns_used--;
 
 	con->ndx = -1;
-#if 0
-	fprintf(stderr, "%s.%d: del: (%d)", __FILE__, __LINE__, conns->used);
-	for (i = 0; i < conns->used; i++) {
-		fprintf(stderr, "%d ", conns->ptr[i]->fd);
-	}
-	fprintf(stderr, "\n");
-#endif
 	return 0;
 }
 
@@ -652,16 +617,7 @@ static int connection_handle_write(server *srv, connection *con) {
 	return 0;
 }
 
-
-
-connection *connection_init(server *srv) {
-	connection *con;
-
-	UNUSED(srv);
-
-	con = calloc(1, sizeof(*con));
-	force_assert(NULL != con);
-
+static void connection_init(server *srv, connection *con) {
 	con->fd = 0;
 	con->ndx = -1;
 	con->fde_ndx = -1;
@@ -717,18 +673,39 @@ connection *connection_init(server *srv) {
 
 	connection_state_machine_init(srv, con);
 	connections_del_event_register(srv, con);
-	return con;
+}
+
+static inline int connection_is_init(connection * con) {
+	return (con->plugin_ctx != NULL);
+}
+
+static void connection_pool_connection_init(server *srv, unsigned short size) {
+	connection ** conns = calloc(size, sizeof(connection *));
+	force_assert(conns);
+	
+	unsigned short i;
+	for(i = 0 ; i < size ; i ++ ) {
+		conns[i] = mpool_malloc(srv->connspool, sizeof(connection));
+		connection_init(srv, conns[i]);
+	}
+	for(i = 0 ; i < size ; i ++ ) {
+		mpool_free(srv->connspool, conns[i]);
+	}
+	free(conns);
+}
+
+void connection_pool_init(server *srv) {
+	srv->connspool = mpool_create(sizeof(connection), srv->max_conns, 0, NULL);
+	force_assert(NULL != srv->connspool);
+	srv->conns_used = 0;
+
+	connection_pool_connection_init(srv, srv->max_conns >= 128 ? 128 : srv->max_conns > 16 ? 16 : srv->max_conns);
 }
 
 void connections_free(server *srv) {
-	connections *conns = srv->conns;
-	size_t i;
+	connection *con;
 
-	if (NULL == conns) return;
-
-	for (i = 0; i < conns->size; i++) {
-		connection *con = conns->ptr[i];
-
+	FOR_ALL_CON(srv, con) {
 		connection_state_machine_exit(srv, con);
 		connections_del_event_unregister(srv, con);
 
@@ -770,17 +747,14 @@ void connections_free(server *srv) {
 #undef CLEAN
 		free(con->plugin_ctx);
 		free(con->cond_cache);
-
-		free(con);
 	}
 
-	free(conns->ptr);
-	free(conns);
-	srv->conns = NULL;
+	mpool_delete(srv->connspool, NULL);
+	srv->connspool = NULL;
 }
 
 
-int connection_reset(server *srv, connection *con) {
+static int connection_reset(server *srv, connection *con) {
 	fprintf(stderr, "%s\n", __func__);
 	plugins_call_connection_reset(srv, con);
 
@@ -1376,7 +1350,7 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 	 * see #1216
 	 */
 
-	if (srv->conns->used >= srv->max_conns) {
+	if (srv->conns_used >= srv->max_conns) {
 		return NULL;
 	}
 
@@ -1435,6 +1409,7 @@ static int connection_read_cq(server *srv, connection *con, chunkqueue *cq, off_
 #else
 	len = read(con->fd, mem, mem_len);
 #endif /* __WIN32 */
+	if(len < 0) fprintf(stderr, "read error:%s\n",strerror(errno) );
 
 	chunkqueue_use_memory(con->read_queue, len > 0 ? len : 0);
 

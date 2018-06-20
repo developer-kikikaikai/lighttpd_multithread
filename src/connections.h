@@ -5,8 +5,9 @@
 #include "server.h"
 #include "fdevent.h"
 
-connection *connection_init(server *srv);
-int connection_reset(server *srv, connection *con);
+
+void connection_pool_init(server *srv);
+static int connection_reset(server *srv, connection *con);
 void connections_free(server *srv);
 
 connection * connection_accept(server *srv, server_socket *srv_sock);
@@ -22,4 +23,5 @@ handler_t connection_handle_read_post_error(server *srv, connection *con, int ht
 int connection_write_chunkqueue(server *srv, connection *con, chunkqueue *c, off_t max_bytes);
 void connection_response_reset(server *srv, connection *con);
 
+#define FOR_ALL_CON(srv,con) for(con=mpool_get_next_usedmem(srv->connspool, NULL);con!=NULL; con=mpool_get_next_usedmem(srv->connspool, con) )
 #endif
