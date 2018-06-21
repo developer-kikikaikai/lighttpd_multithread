@@ -128,8 +128,9 @@ int fdevent_solaris_devpoll_reset(fdevents *ev) {
 }
 int fdevent_solaris_devpoll_init(fdevents *ev) {
 	ev->type = FDEVENT_HANDLER_SOLARIS_DEVPOLL;
+	fdevent_callback_t callback={0};
 #define SET(x) \
-	ev->x = fdevent_solaris_devpoll_##x;
+	callback.x = fdevent_solaris_devpoll_##x;
 
 	SET(free);
 	SET(poll);
@@ -141,6 +142,8 @@ int fdevent_solaris_devpoll_init(fdevents *ev) {
 	SET(event_next_fdndx);
 	SET(event_get_fd);
 	SET(event_get_revent);
+#undef SET
+	fdevent_set(&callback);
 
 	ev->devpollfds = malloc(sizeof(*ev->devpollfds) * ev->maxfds);
 	force_assert(NULL != ev->devpollfds);

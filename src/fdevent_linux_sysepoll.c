@@ -125,8 +125,10 @@ static int fdevent_linux_sysepoll_event_next_fdndx(fdevents *ev, int ndx) {
 
 int fdevent_linux_sysepoll_init(fdevents *ev) {
 	ev->type = FDEVENT_HANDLER_LINUX_SYSEPOLL;
+	fdevent_callback_t callback={0};
+
 #define SET(x) \
-	ev->x = fdevent_linux_sysepoll_##x;
+	callback.x = fdevent_linux_sysepoll_##x;
 
 	SET(free);
 	SET(poll);
@@ -137,6 +139,8 @@ int fdevent_linux_sysepoll_init(fdevents *ev) {
 	SET(event_next_fdndx);
 	SET(event_get_fd);
 	SET(event_get_revent);
+#undef SET
+	fdevent_set(&callback);
 
 	if (-1 == (ev->epoll_fd = epoll_create(ev->maxfds))) {
 		log_error_write(ev->srv, __FILE__, __LINE__, "SSS",

@@ -214,6 +214,7 @@ static int connection_del(server *srv, connection *con) {
 static int connection_close(server *srv, connection *con) {
 	int fd = con->fd;
 	if (con->fd < 0){fprintf(stderr, "%s decrement fd\n", __func__) ;con->fd = -con->fd;}
+	fprintf(stderr, "%s closed\n", __func__);
 
 	plugins_call_handle_connection_close(srv, con);
 
@@ -292,6 +293,7 @@ static int connection_handle_close_state(server *srv, connection *con) {
 }
 
 static void connection_handle_shutdown(server *srv, connection *con) {
+	fprintf("%s shutdown\n", __func__);
 	plugins_call_handle_connection_shut_wr(srv, con);
 
 	connection_reset(srv, con);

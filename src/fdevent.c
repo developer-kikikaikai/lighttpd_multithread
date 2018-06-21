@@ -38,6 +38,7 @@ static inline void fdevent_event_add_self(fdevents *ev, int *fde_ndx, int fd, in
 static inline void fdevent_event_clr_self(fdevents *ev, int *fde_ndx, int fd, int event);
 
 static inline void fdevent_write(fdevents *ev) {
+	UNUSED(ev);
 //	eventfd_write(ev->reg_evefd, 1);
 }
 
@@ -303,7 +304,8 @@ void fdevent_free(fdevents *ev) {
 	size_t i;
 	if (!ev) return;
 
-	if (ev->free) ev->free(ev);
+	
+	if (fdevent_get()->free) fdevent_get()->free(ev);
 
 	fdevent_event_del(ev, &ev->reg_ndx, ev->reg_evefd);
 	fdevent_unregister(ev, ev->reg_evefd);
@@ -322,7 +324,7 @@ void fdevent_free(fdevents *ev) {
 
 //network->server, so don't need to lock
 int fdevent_reset(fdevents *ev) {
-	if (ev->reset) return ev->reset(ev);
+	if (fdevent_get()->reset) return fdevent_get()->reset(ev);
 
 	return 0;
 }
@@ -340,8 +342,7 @@ static void fdnode_free(fdnode *fdn) {
 	free(fdn);
 }
 
-int fdevent_register_(const char *func, fdevents *ev, int fd, fdevent_handler handler, void *ctx) {
-	fprintf(stderr, "(from %s)%s add %d\n", func, __func__, fd);
+int fdevent_register(fdevents *ev, int fd, fdevent_handler handler, void *ctx) {
 	fdnode *fdn;
 
 	fdn = fdnode_init();
@@ -362,10 +363,9 @@ EVE_UNLOCK
 	return 0;
 }
 
-int fdevent_unregister_(const char *func, fdevents *ev, int fd) {
+int fdevent_unregister(fdevents *ev, int fd) {
 	if (!ev) return 0;
 
-	fprintf(stderr, "(from %s)%s remove %d\n", func, __func__, fd);
 EVE_LOCK
 	fdevent_unregister_self(ev, fd);
 EVE_UNLOCK
@@ -436,17 +436,15 @@ EVE_UNLOCK
 }
 
 static void fdevent_event_del_self(fdevents *ev, int *fde_ndx, int fd) {
-	if (ev->fdarray[fd] == NULL){fprintf(stderr, "%s maybe %d is already unregistered\n",__func__, fd); return;}
 	if ((uintptr_t)ev->fdarray[fd] & 0x3) return;
 
-	if (ev->event_del) *fde_ndx = ev->event_del(ev, *fde_ndx, fd);
+	if (fdevent_get()->event_del) *fde_ndx = fdevent_get()->event_del(ev, *fde_ndx, fd);
 	ev->fdarray[fd]->events = 0;
 }
 
-void fdevent_event_del_(const char *func, fdevents *ev, int *fde_ndx, int fd) {
+void fdevent_event_del(fdevents *ev, int *fde_ndx, int fd) {
 	if (-1 == fd) return;
 EVE_LOCK
-	fprintf(stderr, "(from %s)%s del %d\n", func, __func__, fd);
 	fdevent_event_del_self(ev, fde_ndx, fd);
 EVE_UNLOCK
 }
@@ -459,7 +457,7 @@ static inline void fdevent_event_set_self(fdevents *ev, int *fde_ndx, int fd, in
 
 	if (ev->fdarray[fd] == NULL || ev->fdarray[fd]->events == events) return;/*(no change; nothing to do)*/
 
-	if (ev->event_set) *fde_ndx = ev->event_set(ev, *fde_ndx, fd, events);
+	if (fdevent_get()->event_set) *fde_ndx = fdevent_get()->event_set(ev, *fde_ndx, fd, events);
 	ev->fdarray[fd]->events = events;
 }
 
@@ -477,7 +475,7 @@ static void fdevent_event_add_self(fdevents *ev, int *fde_ndx, int fd, int event
 	if ((events & event) == event) return; /*(no change; nothing to do)*/
 
 	events |= event;
-	if (ev->event_set) *fde_ndx = ev->event_set(ev, *fde_ndx, fd, events);
+	if (fdevent_get()->event_set) *fde_ndx = fdevent_get()->event_set(ev, *fde_ndx, fd, events);
 	ev->fdarray[fd]->events = events;
 }
 
@@ -493,7 +491,7 @@ static void fdevent_event_clr_self(fdevents *ev, int *fde_ndx, int fd, int event
 	if (!(events & event)) return; /*(no change; nothing to do)*/
 
 	events &= ~event;
-	if (ev->event_set) *fde_ndx = ev->event_set(ev, *fde_ndx, fd, events);
+	if (fdevent_get()->event_set) *fde_ndx = fdevent_get()->event_set(ev, *fde_ndx, fd, events);
 	ev->fdarray[fd]->events = events;
 }
 
@@ -506,8 +504,8 @@ EVE_UNLOCK
 }
 
 int fdevent_poll(fdevents *ev, int timeout_ms) {
-	if (ev->poll == NULL) SEGFAULT();
-	return ev->poll(ev, timeout_ms);
+	if (fdevent_get()->poll == NULL) SEGFAULT();
+	return fdevent_get()->poll(ev, timeout_ms);
 }
 
 int fdevent_call(struct server *srv) {
@@ -535,20 +533,19 @@ EVE_UNLOCK
 }
 
 static int fdevent_event_get_revent(fdevents *ev, size_t ndx) {
-	if (ev->event_get_revent == NULL) SEGFAULT();
+	if (fdevent_get()->event_get_revent == NULL) SEGFAULT();
 
-	return ev->event_get_revent(ev, ndx);
+	return fdevent_get()->event_get_revent(ev, ndx);
 }
 
 static int fdevent_event_get_fd(fdevents *ev, size_t ndx) {
-	if (ev->event_get_fd == NULL) SEGFAULT();
+	if (fdevent_get()->event_get_fd == NULL) SEGFAULT();
 
-	return ev->event_get_fd(ev, ndx);
+	return fdevent_get()->event_get_fd(ev, ndx);
 }
 
 fdevent_handler fdevent_get_handler(fdevents *ev, int fd) {
 	//there is a case to unregister fdarray
-	if (ev->fdarray[fd] == NULL){fprintf(stderr, "%s maybe %d is already unregistered\n",__func__, fd); return NULL;}
 	if ((uintptr_t)ev->fdarray[fd] & 0x3) return NULL;
 	if (ev->fdarray[fd]->fd != fd) SEGFAULT();
 
@@ -699,7 +696,7 @@ int fdevent_accept_listenfd(int listenfd, struct sockaddr *addr, size_t *addrlen
 
 
 static int fdevent_event_next_fdndx(fdevents *ev, int ndx) {
-	if (ev->event_next_fdndx) return ev->event_next_fdndx(ev, ndx);
+	if (fdevent_get()->event_next_fdndx) return fdevent_get()->event_next_fdndx(ev, ndx);
 
 	return -1;
 }
@@ -1132,4 +1129,16 @@ int fdevent_set_tcp_nodelay (const int fd, const int opt)
 int fdevent_set_so_reuseaddr (const int fd, const int opt)
 {
     return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+}
+
+static fdevent_callback_t callback_g ={0};
+
+FDEventCallbask fdevent_get(void) {
+	fprintf(stderr, "%s\n", __func__);
+	return &callback_g;
+}
+
+void fdevent_set(FDEventCallbask callback) {
+	fprintf(stderr, "%s\n", __func__);
+	memcpy(&callback_g, callback, sizeof(callback_g));
 }

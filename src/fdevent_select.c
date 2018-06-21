@@ -108,8 +108,9 @@ static int fdevent_select_event_next_fdndx(fdevents *ev, int ndx) {
 
 int fdevent_select_init(fdevents *ev) {
 	ev->type = FDEVENT_HANDLER_SELECT;
+	fdevent_callback_t callback={0};
 #define SET(x) \
-	ev->x = fdevent_select_##x;
+	callback.x = fdevent_select_##x;
 
 	SET(reset);
 	SET(poll);
@@ -120,6 +121,8 @@ int fdevent_select_init(fdevents *ev) {
 	SET(event_next_fdndx);
 	SET(event_get_fd);
 	SET(event_get_revent);
+#undef SET
+	fdevent_set(&callback);
 
 	return 0;
 }

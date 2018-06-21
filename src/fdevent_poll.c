@@ -180,9 +180,12 @@ static int fdevent_poll_event_next_fdndx(fdevents *ev, int ndx) {
 
 int fdevent_poll_init(fdevents *ev) {
 	ev->type = FDEVENT_HANDLER_POLL;
-#define SET(x) \
-	ev->x = fdevent_poll_##x;
 
+	fdevent_callback_t callback={0};
+#define SET(x) \
+	callback.x = fdevent_poll_##x;
+
+	
 	SET(free);
 	SET(poll);
 
@@ -192,6 +195,8 @@ int fdevent_poll_init(fdevents *ev) {
 	SET(event_next_fdndx);
 	SET(event_get_fd);
 	SET(event_get_revent);
+#undef SET
+	fdevent_set(&callback);
 
 	return 0;
 }

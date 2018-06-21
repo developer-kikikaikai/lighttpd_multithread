@@ -38,8 +38,7 @@ int fdevent_event_get_interest(const fdevents *ev, int fd);
 void fdevent_event_set(fdevents *ev, int *fde_ndx, int fd, int events); /* events can be FDEVENT_IN, FDEVENT_OUT or FDEVENT_IN | FDEVENT_OUT */
 void fdevent_event_add(fdevents *ev, int *fde_ndx, int fd, int event); /* events can be FDEVENT_IN or FDEVENT_OUT */
 void fdevent_event_clr(fdevents *ev, int *fde_ndx, int fd, int event); /* events can be FDEVENT_IN or FDEVENT_OUT */
-void fdevent_event_del_(const char *func, fdevents *ev, int *fde_ndx, int fd);
-#define fdevent_event_del(ev, fde_ndx, fd) fdevent_event_del_(__func__, ev, fde_ndx, fd)
+void fdevent_event_del(fdevents *ev, int *fde_ndx, int fd);
 fdevent_handler fdevent_get_handler(fdevents *ev, int fd);
 void * fdevent_get_context(fdevents *ev, int fd);
 
@@ -47,10 +46,8 @@ void * fdevent_get_context(fdevents *ev, int fd);
 int fdevent_poll(fdevents *ev, int timeout_ms);
 int fdevent_call(struct server *srv);
 
-int fdevent_register_(const char *func, fdevents *ev, int fd, fdevent_handler handler, void *ctx);
-#define fdevent_register(ev, fd, handler, ctx) fdevent_register_(__func__, ev, fd, handler, ctx)
-int fdevent_unregister_(const char *func, fdevents *ev, int fd);
-#define fdevent_unregister(ev, fd) fdevent_unregister_(__func__, ev, fd)
+int fdevent_register(fdevents *ev, int fd, fdevent_handler handler, void *ctx);
+int fdevent_unregister(fdevents *ev, int fd);
 void fdevent_sched_close(fdevents *ev, int fd, int issock);
 void fdevent_sched_run(struct server *srv, fdevents *ev);
 
