@@ -25,8 +25,6 @@
 static int use_sock_cloexec;
 #endif
 
-#define IF_NOT_MAIN(ev) if(ev->srv->tid != pthread_self())
-
 static void fdnode_free(fdnode *fdn);
 static int fdevent_event_get_revent(fdevents *ev, size_t ndx);
 static int fdevent_event_get_fd(fdevents *ev, size_t ndx);
@@ -36,11 +34,6 @@ static inline void fdevent_event_del_self(fdevents *ev, int *fde_ndx, int fd);
 static inline void fdevent_event_set_self(fdevents *ev, int *fde_ndx, int fd, int events);
 static inline void fdevent_event_add_self(fdevents *ev, int *fde_ndx, int fd, int event);
 static inline void fdevent_event_clr_self(fdevents *ev, int *fde_ndx, int fd, int event);
-
-static inline void fdevent_write(fdevents *ev) {
-	UNUSED(ev);
-//	eventfd_write(ev->reg_evefd, 1);
-}
 
 //if use function only server, don't need to lock
 static pthread_mutex_t event_lock=PTHREAD_MUTEX_INITIALIZER;
@@ -182,14 +175,6 @@ static inline void fdevent_unregister_self(fdevents *ev, int fd) {
 	ev->fdarray[fd] = NULL;
 }
 
-static  handler_t fd_registrer_handler(struct server *srv, void *ctx, int revents) {
-	UNUSED(ctx);
-	UNUSED(revents);
-	eventfd_t cnt=0;
-	(void)eventfd_read(srv->ev->reg_evefd, &cnt);
-	return HANDLER_GO_ON;
-}
-
 fdevents *fdevent_init(server *srv) {
 	fdevents *ev;
 	int type = srv->event_handler;
@@ -283,12 +268,6 @@ fdevents *fdevent_init(server *srv) {
 		goto error;
 	}
 
-	/*add register event handle to running loop */
-	ev->reg_evefd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK );
-
-	fdevent_register(ev, ev->reg_evefd, fd_registrer_handler, NULL);
-	ev->reg_ndx = -1;
-	fdevent_event_set(ev, &ev->reg_ndx, ev->reg_evefd, FDEVENT_IN);
 	return ev;
 error:
 	free(ev->fdarray);
@@ -307,9 +286,6 @@ void fdevent_free(fdevents *ev) {
 	
 	if (fdevent_get()->free) fdevent_get()->free(ev);
 
-	fdevent_event_del(ev, &ev->reg_ndx, ev->reg_evefd);
-	fdevent_unregister(ev, ev->reg_evefd);
-
 	for (i = 0; i < ev->maxfds; i++) {
 		/* (fdevent_sched_run() should already have been run,
 		 *  but take reasonable precautions anyway) */
@@ -318,7 +294,6 @@ void fdevent_free(fdevents *ev) {
 	}
 
 	free(ev->fdarray);
-	close(ev->reg_evefd);
 	free(ev);
 }
 
@@ -356,10 +331,6 @@ EVE_LOCK
 	ev->fdarray[fdn->fd] = fdn;
 EVE_UNLOCK
 
-	IF_NOT_MAIN(ev) {
-		fdevent_write(ev);
-	}
-
 	return 0;
 }
 
@@ -369,9 +340,6 @@ int fdevent_unregister(fdevents *ev, int fd) {
 EVE_LOCK
 	fdevent_unregister_self(ev, fd);
 EVE_UNLOCK
-	IF_NOT_MAIN(ev) {
-		fdevent_write(ev);
-	}
 	return 0;
 }
 

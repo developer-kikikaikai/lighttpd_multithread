@@ -143,8 +143,6 @@ struct fdevents {
   #ifdef FDEVENT_USE_LIBEV
     struct ev_loop *libev_loop;
   #endif
-    int reg_evefd;
-    int reg_ndx;
 };
 
 int fdevent_select_init(struct fdevents *ev);
