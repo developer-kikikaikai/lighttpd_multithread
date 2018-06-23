@@ -296,7 +296,6 @@ typedef enum {
 //event for connection state machine
 typedef enum {
 	CON_EVENT_RUN,
-	CON_EVENT_FD,
 } connection_event_t;
 
 typedef enum {
@@ -324,6 +323,9 @@ typedef struct cond_cache_t {
 	int matches[3 * 10];
 	buffer *comp_value; /* just a pointer */
 } cond_cache_t;
+
+struct connection_event_handler_t;
+typedef struct connection_event_handler_t connection_event_handler_t, *ConEventHandler;
 
 struct connection {
 	connection_state_t state;
@@ -411,9 +413,10 @@ struct connection {
 
 	int conditional_is_valid[COMP_LAST_ELEMENT]; 
 	StateMachineInfo state_machine;
-	int eventfd;
-	int fdevent_ndx;
-	eventfd_t close_call;
+
+	/*connection event handler pool*/
+	MemoryPool event_pool;
+	ConEventHandler client_handler;
 };
 
 typedef struct {
@@ -580,7 +583,6 @@ struct server {
 	pid_t pid;
 	pthread_t tid;
 };
-
 
 typedef struct http_connection_t {
 	server * srv;

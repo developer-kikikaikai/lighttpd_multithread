@@ -1783,7 +1783,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 				 */
 				connection * con;
 				FOR_ALL_CON(srv,con) {
-					const int waitevents = fdevent_event_get_interest(srv->ev, con->fd);
+					const int waitevents = connection_fdevent_get_interest(con->client_handler);
 					int changed = 0;
 					int t_diff;
 

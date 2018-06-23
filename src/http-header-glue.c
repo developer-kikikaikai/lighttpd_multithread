@@ -10,6 +10,7 @@
 #include "response.h"
 #include "sock_addr.h"
 #include "stat_cache.h"
+#include "connections.h"
 
 #include <string.h>
 #include <errno.h>
@@ -1229,7 +1230,7 @@ handler_t http_response_parse_headers(server *srv, connection *con, http_respons
 }
 
 
-handler_t http_response_read(server *srv, connection *con, http_response_opts *opts, buffer *b, int fd, int *fde_ndx) {
+handler_t http_response_read(server *srv, connection *con, http_response_opts *opts, buffer *b, int fd, ConEventHandler ev) {
     while (1) {
         ssize_t n;
         size_t avail = buffer_string_space(b);
@@ -1264,7 +1265,7 @@ handler_t http_response_read(server *srv, connection *con, http_response_opts *o
                      * immediately, unless !con->is_writable, where
                      * connection_state_machine() might not loop back to call
                      * mod_proxy_handle_subrequest())*/
-                    fdevent_event_clr(srv->ev, fde_ndx, fd, FDEVENT_IN);
+                    connection_fdevent_clr(ev, FDEVENT_IN);
                 }
                 if (cqlen >= 65536-1) return HANDLER_GO_ON;
                 toread = 65536 - 1 - (unsigned int)cqlen;
@@ -1335,7 +1336,7 @@ handler_t http_response_read(server *srv, connection *con, http_response_opts *o
                  * data immediately, unless !con->is_writable, where
                  * connection_state_machine() might not loop back to
                  * call the subrequest handler)*/
-                fdevent_event_clr(srv->ev, fde_ndx, fd, FDEVENT_IN);
+                connection_fdevent_clr(ev, FDEVENT_IN);
             }
             break;
         }

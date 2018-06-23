@@ -2013,7 +2013,7 @@ static handler_t gw_recv_response(server *srv, gw_handler_ctx *hctx) {
     buffer *b = hctx->opts.backend == BACKEND_FASTCGI
       ? buffer_init()
       : hctx->response;
-
+#if 0
     switch (http_response_read(srv, hctx->remote_conn, &hctx->opts,
                                b, hctx->fd, &hctx->fde_ndx)) {
     default:
@@ -2124,7 +2124,7 @@ static handler_t gw_recv_response(server *srv, gw_handler_ctx *hctx) {
         gw_connection_close(srv, hctx);
         return HANDLER_FINISHED;
     }
-
+#endif
     if (b != hctx->response) buffer_free(b);
     return HANDLER_GO_ON;
 }

@@ -1102,11 +1102,9 @@ int fdevent_set_so_reuseaddr (const int fd, const int opt)
 static fdevent_callback_t callback_g ={0};
 
 FDEventCallbask fdevent_get(void) {
-	fprintf(stderr, "%s\n", __func__);
 	return &callback_g;
 }
 
 void fdevent_set(FDEventCallbask callback) {
-	fprintf(stderr, "%s\n", __func__);
 	memcpy(&callback_g, callback, sizeof(callback_g));
 }

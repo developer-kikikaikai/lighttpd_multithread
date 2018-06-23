@@ -7,11 +7,19 @@
 
 
 void connection_pool_init(server *srv);
-static int connection_reset(server *srv, connection *con);
 void connections_free(server *srv);
 
 connection * connection_accept(server *srv, server_socket *srv_sock);
 connection * connection_accepted(server *srv, server_socket *srv_socket, sock_addr *cnt_addr, int cnt);
+
+typedef handler_t (*con_fdevent_handler)(server *srv, connection *con, void *context, int revents);
+
+ConEventHandler connection_fdevent_add(server *srv, connection *con, int fd, con_fdevent_handler handler, void *ctx, int events);
+void connection_fdevent_set(ConEventHandler ev, int events);
+void connection_fdevent_clr(ConEventHandler ev, int event);
+void connection_fdevent_event_del(ConEventHandler ev);
+int connection_fdevent_get_interest(ConEventHandler ev);
+void connection_fdevent_sched_close(ConEventHandler ev);
 
 int connection_set_state(server *srv, connection *con, connection_state_t state);
 const char * connection_get_state(connection_state_t state);
