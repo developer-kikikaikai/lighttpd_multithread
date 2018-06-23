@@ -27,7 +27,7 @@ static void http_chunk_append_len(server *srv, connection *con, uintmax_t len) {
 
 	force_assert(NULL != srv);
 
-	b = srv->tmp_chunk_len;
+	b = con->tmp_chunk_len;
 
 	buffer_string_set_length(b, 0);
 	buffer_append_uint_hex(b, len);
@@ -98,7 +98,7 @@ static int http_chunk_append_to_tempfile(server *srv, connection *con, const cha
 
 	if (con->response.transfer_encoding & HTTP_TRANSFER_ENCODING_CHUNKED) {
 		/*http_chunk_append_len(srv, con, len);*/
-		buffer *b = srv->tmp_chunk_len;
+		buffer *b = con->tmp_chunk_len;
 
 		buffer_string_set_length(b, 0);
 		buffer_append_uint_hex(b, len);

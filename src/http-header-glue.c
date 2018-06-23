@@ -439,22 +439,22 @@ static int http_response_parse_range(server *srv, connection *con, buffer *path,
 
 		/* set header-fields */
 
-		buffer_copy_string_len(srv->tmp_buf, CONST_STR_LEN("multipart/byteranges; boundary="));
-		buffer_append_string(srv->tmp_buf, boundary);
+		buffer_copy_string_len(con->tmp_buf, CONST_STR_LEN("multipart/byteranges; boundary="));
+		buffer_append_string(con->tmp_buf, boundary);
 
 		/* overwrite content-type */
-		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(srv->tmp_buf));
+		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(con->tmp_buf));
 	} else {
 		/* add Content-Range-header */
 
-		buffer_copy_string_len(srv->tmp_buf, CONST_STR_LEN("bytes "));
-		buffer_append_int(srv->tmp_buf, start);
-		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("-"));
-		buffer_append_int(srv->tmp_buf, end);
-		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("/"));
-		buffer_append_int(srv->tmp_buf, sce->st.st_size);
+		buffer_copy_string_len(con->tmp_buf, CONST_STR_LEN("bytes "));
+		buffer_append_int(con->tmp_buf, start);
+		buffer_append_string_len(con->tmp_buf, CONST_STR_LEN("-"));
+		buffer_append_int(con->tmp_buf, end);
+		buffer_append_string_len(con->tmp_buf, CONST_STR_LEN("/"));
+		buffer_append_int(con->tmp_buf, sce->st.st_size);
 
-		response_header_insert(srv, con, CONST_STR_LEN("Content-Range"), CONST_BUF_LEN(srv->tmp_buf));
+		response_header_insert(srv, con, CONST_STR_LEN("Content-Range"), CONST_BUF_LEN(con->tmp_buf));
 	}
 
 	/* ok, the file is set-up */
@@ -665,7 +665,7 @@ static void http_response_xsendfile (server *srv, connection *con, buffer *path,
 
 static void http_response_xsendfile2(server *srv, connection *con, const buffer *value, const array *xdocroot) {
     const char *pos = value->ptr;
-    buffer *b = srv->tmp_buf;
+    buffer *b = con->tmp_buf;
     const int status = con->http_status;
 
     /* reset Content-Length, if set by backend */
@@ -1428,13 +1428,13 @@ int http_cgi_headers (server *srv, connection *con, http_cgi_opts *opts, http_cg
                             CONST_BUF_LEN(con->request.pathinfo));
             /* PATH_TRANSLATED is only defined if PATH_INFO is set */
             if (!buffer_string_is_empty(opts->docroot)) {
-                buffer_copy_buffer(srv->tmp_buf, opts->docroot);
+                buffer_copy_buffer(con->tmp_buf, opts->docroot);
             } else {
-                buffer_copy_buffer(srv->tmp_buf, con->physical.basedir);
+                buffer_copy_buffer(con->tmp_buf, con->physical.basedir);
             }
-            buffer_append_string_buffer(srv->tmp_buf, con->request.pathinfo);
+            buffer_append_string_buffer(con->tmp_buf, con->request.pathinfo);
             rc |= cb(vdata, CONST_STR_LEN("PATH_TRANSLATED"),
-                            CONST_BUF_LEN(srv->tmp_buf));
+                            CONST_BUF_LEN(con->tmp_buf));
         }
     }
 
@@ -1447,10 +1447,10 @@ int http_cgi_headers (server *srv, connection *con, http_cgi_opts *opts, http_cg
 
     if (!buffer_string_is_empty(opts->docroot)) {
         /* alternate docroot, e.g. for remote FastCGI or SCGI server */
-        buffer_copy_buffer(srv->tmp_buf, opts->docroot);
-        buffer_append_string_buffer(srv->tmp_buf, con->uri.path);
+        buffer_copy_buffer(con->tmp_buf, opts->docroot);
+        buffer_append_string_buffer(con->tmp_buf, con->uri.path);
         rc |= cb(vdata, CONST_STR_LEN("SCRIPT_FILENAME"),
-                        CONST_BUF_LEN(srv->tmp_buf));
+                        CONST_BUF_LEN(con->tmp_buf));
         rc |= cb(vdata, CONST_STR_LEN("DOCUMENT_ROOT"),
                         CONST_BUF_LEN(opts->docroot));
     } else {
@@ -1460,10 +1460,10 @@ int http_cgi_headers (server *srv, connection *con, http_cgi_opts *opts, http_cg
              *
              * see src/sapi/cgi_main.c, init_request_info()
              */
-            buffer_copy_buffer(srv->tmp_buf, con->physical.path);
-            buffer_append_string_buffer(srv->tmp_buf, con->request.pathinfo);
+            buffer_copy_buffer(con->tmp_buf, con->physical.path);
+            buffer_append_string_buffer(con->tmp_buf, con->request.pathinfo);
             rc |= cb(vdata, CONST_STR_LEN("SCRIPT_FILENAME"),
-                            CONST_BUF_LEN(srv->tmp_buf));
+                            CONST_BUF_LEN(con->tmp_buf));
         } else {
             rc |= cb(vdata, CONST_STR_LEN("SCRIPT_FILENAME"),
                             CONST_BUF_LEN(con->physical.path));
@@ -1554,9 +1554,9 @@ int http_cgi_headers (server *srv, connection *con, http_cgi_opts *opts, http_cg
                                                 CONST_STR_LEN("Proxy"))) {
                 continue;
             }
-            buffer_copy_string_encoded_cgi_varnames(srv->tmp_buf,
+            buffer_copy_string_encoded_cgi_varnames(con->tmp_buf,
                                                     CONST_BUF_LEN(ds->key), 1);
-            rc |= cb(vdata, CONST_BUF_LEN(srv->tmp_buf),
+            rc |= cb(vdata, CONST_BUF_LEN(con->tmp_buf),
                             CONST_BUF_LEN(ds->value));
         }
     }
@@ -1566,9 +1566,9 @@ int http_cgi_headers (server *srv, connection *con, http_cgi_opts *opts, http_cg
     for (n = 0; n < con->environment->used; n++) {
         data_string *ds = (data_string *)con->environment->data[n];
         if (!buffer_is_empty(ds->value) && !buffer_is_empty(ds->key)) {
-            buffer_copy_string_encoded_cgi_varnames(srv->tmp_buf,
+            buffer_copy_string_encoded_cgi_varnames(con->tmp_buf,
                                                     CONST_BUF_LEN(ds->key), 0);
-            rc |= cb(vdata, CONST_BUF_LEN(srv->tmp_buf),
+            rc |= cb(vdata, CONST_BUF_LEN(con->tmp_buf),
                             CONST_BUF_LEN(ds->value));
         }
     }

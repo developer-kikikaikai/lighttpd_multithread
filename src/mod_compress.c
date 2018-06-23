@@ -182,6 +182,7 @@ SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 
 	p->config_storage = calloc(1, srv->config_context->used * sizeof(plugin_config *));
 
+	buffer * tmp_buf = buffer_init();
 	for (i = 0; i < srv->config_context->used; i++) {
 		data_config const* config = (data_config const*)srv->config_context->data[i];
 		plugin_config *s;
@@ -198,8 +199,8 @@ SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 		cv[1].destination = s->compress;
 		cv[2].destination = &(s->compress_max_filesize);
 		cv[3].destination = encodings_arr; /* temp array for allowed encodings list */
-		cv[4].destination = srv->tmp_buf;
-		buffer_string_set_length(srv->tmp_buf, 0);
+		cv[4].destination = tmp_buf;
+		buffer_string_set_length(tmp_buf, 0);
 
 		p->config_storage[i] = s;
 
@@ -207,8 +208,8 @@ SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 			return HANDLER_ERROR;
 		}
 
-		if (!buffer_string_is_empty(srv->tmp_buf)) {
-			s->max_loadavg = strtod(srv->tmp_buf->ptr, NULL);
+		if (!buffer_string_is_empty(tmp_buf)) {
+			s->max_loadavg = strtod(tmp_buf->ptr, NULL);
 		}
 
 		if (!array_is_vlist(s->compress)) {
@@ -273,8 +274,10 @@ SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 				return HANDLER_ERROR;
 			}
 		}
+		buffer_reset(tmp_buf);
 	}
 
+	buffer_free(tmp_buf);
 	return HANDLER_GO_ON;
 
 }
@@ -889,7 +892,7 @@ PHYSICALPATH_FUNC(mod_compress_physical) {
 	if (sce->content_type->ptr) {
 		char *c;
 		if ( (c = strchr(sce->content_type->ptr, ';')) != NULL) {
-			content_type = srv->tmp_buf;
+			content_type = con->tmp_buf;
 			buffer_copy_string_len(content_type, sce->content_type->ptr, c - sce->content_type->ptr);
 		}
 	}
@@ -971,10 +974,10 @@ PHYSICALPATH_FUNC(mod_compress_physical) {
 
 					if (use_etag) {
 						/* try matching etag of compressed version */
-						buffer_copy_buffer(srv->tmp_buf, sce->etag);
-						buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("-"));
-						buffer_append_string(srv->tmp_buf, compression_name);
-						etag_mutate(con->physical.etag, srv->tmp_buf);
+						buffer_copy_buffer(con->tmp_buf, sce->etag);
+						buffer_append_string_len(con->tmp_buf, CONST_STR_LEN("-"));
+						buffer_append_string(con->tmp_buf, compression_name);
+						etag_mutate(con->physical.etag, con->tmp_buf);
 					}
 
 					if (HANDLER_FINISHED == http_response_handle_cachable(srv, con, mtime)) {

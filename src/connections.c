@@ -102,7 +102,7 @@ static int connection_handle_base(int (*handle)(server *srv, connection *con), v
 				connection_get_state(http_con->con->state));
 	}
 
-//	fprintf(stderr, "%s state %s\n", __func__, connection_get_state(http_con->con->state));
+	fprintf(stderr, "thread:%x, %s state %s\n", (unsigned int)pthread_self(), __func__, connection_get_state(http_con->con->state));
 	if( handle(http_con->srv, http_con->con) == -1 || http_con->ostate != (int)http_con->con->state ) {
 		http_con->ostate = http_con->con->state;
 		return state_machine_call_event(http_con->con->state_machine, CON_EVENT_RUN, arg, 0, NULL);
@@ -208,7 +208,7 @@ static int connection_del(server *srv, connection *con) {
 static int connection_close(server *srv, connection *con) {
 	int fd = con->fd;
 	if (con->fd < 0){fprintf(stderr, "%s decrement fd\n", __func__) ;con->fd = -con->fd;}
-//	fprintf(stderr, "%s closed\n", __func__);
+	fprintf(stderr, "[%x]%s closed\n",(unsigned int )pthread_self(),  __func__);
 
 	plugins_call_handle_connection_close(srv, con);
 
@@ -509,9 +509,9 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 				/* qlen = 0 is important for Redirects (301, ...) as they MAY have
 				 * a content. Browsers are waiting for a Content otherwise
 				 */
-				buffer_copy_int(srv->tmp_buf, qlen);
+				buffer_copy_int(con->tmp_buf, qlen);
 
-				response_header_overwrite(srv, con, CONST_STR_LEN("Content-Length"), CONST_BUF_LEN(srv->tmp_buf));
+				response_header_overwrite(srv, con, CONST_STR_LEN("Content-Length"), CONST_BUF_LEN(con->tmp_buf));
 			}
 		}
 	} else {
@@ -533,7 +533,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 				con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
 				if (qlen) {
 					/* create initial Transfer-Encoding: chunked segment */
-					buffer *b = srv->tmp_chunk_len;
+					buffer *b = con->tmp_chunk_len;
 					buffer_string_set_length(b, 0);
 					buffer_append_uint_hex(b, (uintmax_t)qlen);
 					buffer_append_string_len(b, CONST_STR_LEN("\r\n"));
@@ -656,6 +656,8 @@ static void connection_init(server *srv, connection *con) {
 	CLEAN(proto);
 	CLEAN(dst_addr_buf);
 
+	CLEAN(tmp_buf);
+	CLEAN(tmp_chunk_len);
 #undef CLEAN
 	con->write_queue = chunkqueue_init();
 	con->read_queue = chunkqueue_init();
@@ -664,6 +666,7 @@ static void connection_init(server *srv, connection *con) {
 	con->request.headers      = array_init();
 	con->response.headers     = array_init();
 	con->environment     = array_init();
+	con->split_vals = array_init();
 
 	/* init plugin specific connection structures */
 
@@ -675,7 +678,7 @@ static void connection_init(server *srv, connection *con) {
 	config_setup_connection(srv, con);
 
 	connection_state_machine_init(srv, con);
-	con->event_pool = mpool_create(CON_EVENTFD_SIZE, CON_MAX_EVENTFD, 0, connection_event_init);
+	con->event_pool = mpool_create(CON_EVENTFD_SIZE, CON_MAX_EVENTFD, 1, connection_event_init);
 	force_assert(con->event_pool);
 }
 
@@ -748,9 +751,13 @@ void connections_free(server *srv) {
 		CLEAN(server_name);
 		CLEAN(proto);
 		CLEAN(dst_addr_buf);
+
+		CLEAN(tmp_buf);
+		CLEAN(tmp_chunk_len);
 #undef CLEAN
 		free(con->plugin_ctx);
 		free(con->cond_cache);
+		array_free(con->split_vals);
 	}
 
 	mpool_delete(srv->connspool, NULL);
@@ -759,7 +766,7 @@ void connections_free(server *srv) {
 
 
 static int connection_reset(server *srv, connection *con) {
-//	fprintf(stderr, "%s\n", __func__);
+	fprintf(stderr, "[%x]%s\n",(unsigned int )pthread_self(),  __func__);
 	plugins_call_connection_reset(srv, con);
 
 	connection_response_reset(srv, con);
@@ -797,6 +804,9 @@ static int connection_reset(server *srv, connection *con) {
 
 	CLEAN(server_name);
 	/*CLEAN(proto);*//* set to default in connection_accepted() */
+
+	CLEAN(tmp_buf);
+	CLEAN(tmp_chunk_len);
 #undef CLEAN
 
 #define CLEAN(x) \
@@ -816,6 +826,7 @@ static int connection_reset(server *srv, connection *con) {
 
 	array_reset(con->request.headers);
 	array_reset(con->environment);
+	array_reset(con->split_vals);
 
 	chunkqueue_reset(con->request_content_queue);
 
@@ -829,12 +840,13 @@ static int connection_reset(server *srv, connection *con) {
 	/*(error_handler_saved_method value is not valid unless error_handler_saved_status is set)*/
 
 	config_setup_connection(srv, con);
+	fprintf(stderr, "[%x]%s exit\n",(unsigned int )pthread_self(),  __func__);
 
 	return 0;
 }
 
 static int connection_handle_request_start_state(server *srv, connection *con) {
-//	fprintf(stderr, "request start, thread:%x, con=%p\n", (unsigned int)pthread_self(), (void *)con);
+	fprintf(stderr, "request start, thread:%x, con=%p\n", (unsigned int)pthread_self(), (void *)con);
 	con->request_start = server_get_cur_ts();
 	con->read_idle_ts = con->request_start;
 	if (con->conf.high_precision_timestamps)

@@ -519,10 +519,10 @@ static int process_ssi_stmt(server *srv, connection *con, handler_ctx *p, const 
 				buffer_copy_string_len(p->stat_fn, con->physical.path->ptr, sl - con->physical.path->ptr + 1);
 			}
 
-			buffer_copy_string(srv->tmp_buf, file_path);
-			buffer_urldecode_path(srv->tmp_buf);
-			buffer_path_simplify(srv->tmp_buf, srv->tmp_buf);
-			buffer_append_string_buffer(p->stat_fn, srv->tmp_buf);
+			buffer_copy_string(con->tmp_buf, file_path);
+			buffer_urldecode_path(con->tmp_buf);
+			buffer_path_simplify(con->tmp_buf, con->tmp_buf);
+			buffer_append_string_buffer(p->stat_fn, con->tmp_buf);
 		} else {
 			/* virtual */
 			size_t remain;
@@ -538,7 +538,7 @@ static int process_ssi_stmt(server *srv, connection *con, handler_ctx *p, const 
 			}
 
 			buffer_urldecode_path(p->stat_fn);
-			buffer_path_simplify(srv->tmp_buf, p->stat_fn);
+			buffer_path_simplify(con->tmp_buf, p->stat_fn);
 
 			/* we have an uri */
 
@@ -562,12 +562,12 @@ static int process_ssi_stmt(server *srv, connection *con, handler_ctx *p, const 
 			{
 				const char *sep, *sep2;
 				sep = con->uri.path->ptr;
-				sep2 = srv->tmp_buf->ptr;
+				sep2 = con->tmp_buf->ptr;
 				for (i = 0; sep[i] && sep[i] == sep2[i]; ++i) ;
 				while (i != 0 && sep[--i] != '/') ; /* find matching directory path */
 			}
 			if (con->conf.force_lowercase_filenames) {
-				buffer_to_lower(srv->tmp_buf);
+				buffer_to_lower(con->tmp_buf);
 			}
 			remain = buffer_string_length(con->uri.path) - i;
 			if (!con->conf.force_lowercase_filenames
@@ -575,12 +575,12 @@ static int process_ssi_stmt(server *srv, connection *con, handler_ctx *p, const 
 			    :(buffer_string_length(con->physical.path) >= remain
 			      && 0 == strncasecmp(con->physical.path->ptr+buffer_string_length(con->physical.path)-remain, con->physical.rel_path->ptr+i, remain))) {
 				buffer_copy_string_len(p->stat_fn, con->physical.path->ptr, buffer_string_length(con->physical.path)-remain);
-				buffer_append_string_len(p->stat_fn, srv->tmp_buf->ptr+i, buffer_string_length(srv->tmp_buf)-i);
+				buffer_append_string_len(p->stat_fn, con->tmp_buf->ptr+i, buffer_string_length(con->tmp_buf)-i);
 			} else {
 				/* unable to perform physical path remap here;
 				 * assume doc_root/rel_path and no remapping */
 				buffer_copy_buffer(p->stat_fn, con->physical.doc_root);
-				buffer_append_string_buffer(p->stat_fn, srv->tmp_buf);
+				buffer_append_string_buffer(p->stat_fn, con->tmp_buf);
 			}
 		}
 
@@ -638,7 +638,7 @@ static int process_ssi_stmt(server *srv, connection *con, handler_ctx *p, const 
 
 					/* save and restore con->physical.path, con->physical.rel_path, and con->uri.path around include
 					 *
-					 * srv->tmp_buf contains url-decoded, path-simplified, and lowercased (if con->conf.force_lowercase) uri path of target.
+					 * con->tmp_buf contains url-decoded, path-simplified, and lowercased (if con->conf.force_lowercase) uri path of target.
 					 * con->uri.path and con->physical.rel_path are set to the same since we only operate on filenames here,
 					 * not full re-run of all modules for subrequest */
 					upsave = con->uri.path;
@@ -648,7 +648,7 @@ static int process_ssi_stmt(server *srv, connection *con, handler_ctx *p, const 
 					con->physical.path = p->stat_fn;
 					p->stat_fn = buffer_init();
 
-					con->uri.path = con->physical.rel_path = buffer_init_buffer(srv->tmp_buf);
+					con->uri.path = con->physical.rel_path = buffer_init_buffer(con->tmp_buf);
 
 					/*(ignore return value; muddle along as best we can if error occurs)*/
 					++p->ssi_recursion_depth;

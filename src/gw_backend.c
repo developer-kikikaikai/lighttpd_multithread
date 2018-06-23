@@ -32,7 +32,7 @@
 #include "status_counter.h"
 
 static data_integer * gw_status_get_di(server *srv, gw_host *host, gw_proc *proc, const char *tag, size_t len) {
-    buffer *b = srv->tmp_buf;
+    buffer *b = buffer_init();
     buffer_copy_string_len(b, CONST_STR_LEN("gw.backend."));
     buffer_append_string_buffer(b, host->id);
     if (proc) {
@@ -40,7 +40,9 @@ static data_integer * gw_status_get_di(server *srv, gw_host *host, gw_proc *proc
         buffer_append_int(b, proc->id);
     }
     buffer_append_string_len(b, tag, len);
-    return status_counter_get_counter(srv, CONST_BUF_LEN(b));
+    data_integer * di = status_counter_get_counter(srv, CONST_BUF_LEN(b));
+    buffer_free(b);
+    return di;
 }
 
 static void gw_proc_tag_inc(server *srv, gw_host *host, gw_proc *proc, const char *tag, size_t len) {

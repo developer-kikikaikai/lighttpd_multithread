@@ -400,6 +400,11 @@ struct connection {
 	buffer *server_name;
 	buffer *proto;
 
+	/* tmp buffers */
+	buffer *tmp_buf;
+	buffer *tmp_chunk_len;
+	array *split_vals;
+
 	/* error-handler */
 	int error_handler_saved_status;
 	http_method_t error_handler_saved_method;
@@ -522,15 +527,9 @@ struct server {
 	size_t max_conns;
 
 	/* buffers */
-	buffer *tmp_buf;
-
-	buffer *tmp_chunk_len;
-
 	buffer *empty_string; /* is necessary for cond_match */
 
 	buffer *cond_check_buf;
-
-	array *split_vals;
 
 	/* Timestamps */
 	time_t startup_ts;

@@ -179,6 +179,7 @@ int plugins_load(server *srv) {
 	plugin *p;
 	int (*init)(plugin *pl);
 	size_t i, j;
+	buffer * tmp_buf = buffer_init();
 
 	for (i = 0; i < srv->srvconf.modules->used; i++) {
 		data_string *d = (data_string *)srv->srvconf.modules->data[i];
@@ -193,19 +194,19 @@ int plugins_load(server *srv) {
 			}
 		}
 
-		buffer_copy_buffer(srv->tmp_buf, srv->srvconf.modules_dir);
+		buffer_copy_buffer(tmp_buf, srv->srvconf.modules_dir);
 
-		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("/"));
-		buffer_append_string(srv->tmp_buf, module);
+		buffer_append_string_len(tmp_buf, CONST_STR_LEN("/"));
+		buffer_append_string(tmp_buf, module);
 #if defined(__WIN32) || defined(__CYGWIN__)
-		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN(".dll"));
+		buffer_append_string_len(tmp_buf, CONST_STR_LEN(".dll"));
 #else
-		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN(".so"));
+		buffer_append_string_len(tmp_buf, CONST_STR_LEN(".so"));
 #endif
 
 		p = plugin_init();
 #ifdef __WIN32
-		if (NULL == (p->lib = LoadLibrary(srv->tmp_buf->ptr))) {
+		if (NULL == (p->lib = LoadLibrary(tmp_buf->ptr))) {
 			LPVOID lpMsgBuf;
 			FormatMessage(
 				FORMAT_MESSAGE_ALLOCATE_BUFFER |
@@ -217,30 +218,32 @@ int plugins_load(server *srv) {
 				0, NULL);
 
 			log_error_write(srv, __FILE__, __LINE__, "ssb", "LoadLibrary() failed",
-				lpMsgBuf, srv->tmp_buf);
+				lpMsgBuf, tmp_buf);
 
 			plugin_free(p);
+			buffer_free(tmp_buf);
 
 			return -1;
 
 		}
 #else
-		if (NULL == (p->lib = dlopen(srv->tmp_buf->ptr, RTLD_NOW|RTLD_GLOBAL))) {
+		if (NULL == (p->lib = dlopen(tmp_buf->ptr, RTLD_NOW|RTLD_GLOBAL))) {
 			log_error_write(srv, __FILE__, __LINE__, "sbs", "dlopen() failed for:",
-				srv->tmp_buf, dlerror());
+				tmp_buf, dlerror());
 
 			plugin_free(p);
+			buffer_free(tmp_buf);
 
 			return -1;
 		}
 
 #endif
-		buffer_reset(srv->tmp_buf);
-		buffer_copy_string(srv->tmp_buf, module);
-		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("_plugin_init"));
+		buffer_reset(tmp_buf);
+		buffer_copy_string(tmp_buf, module);
+		buffer_append_string_len(tmp_buf, CONST_STR_LEN("_plugin_init"));
 
 #ifdef __WIN32
-		init = GetProcAddress(p->lib, srv->tmp_buf->ptr);
+		init = GetProcAddress(p->lib, tmp_buf->ptr);
 
 		if (init == NULL) {
 			LPVOID lpMsgBuf;
@@ -253,27 +256,29 @@ int plugins_load(server *srv) {
 				(LPTSTR) &lpMsgBuf,
 				0, NULL);
 
-			log_error_write(srv, __FILE__, __LINE__, "sbs", "getprocaddress failed:", srv->tmp_buf, lpMsgBuf);
+			log_error_write(srv, __FILE__, __LINE__, "sbs", "getprocaddress failed:", tmp_buf, lpMsgBuf);
 
 			plugin_free(p);
+			buffer_free(tmp_buf);
 			return -1;
 		}
 
 #else
 #if 1
-		init = (int (*)(plugin *))(intptr_t)dlsym(p->lib, srv->tmp_buf->ptr);
+		init = (int (*)(plugin *))(intptr_t)dlsym(p->lib, tmp_buf->ptr);
 #else
-		*(void **)(&init) = dlsym(p->lib, srv->tmp_buf->ptr);
+		*(void **)(&init) = dlsym(p->lib, tmp_buf->ptr);
 #endif
 		if (NULL == init) {
 			const char *error = dlerror();
 			if (error != NULL) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "dlsym:", error);
 			} else {
-				log_error_write(srv, __FILE__, __LINE__, "ss", "dlsym symbol not found:", srv->tmp_buf->ptr);
+				log_error_write(srv, __FILE__, __LINE__, "ss", "dlsym symbol not found:", tmp_buf->ptr);
 			}
 
 			plugin_free(p);
+			buffer_free(tmp_buf);
 			return -1;
 		}
 
@@ -282,6 +287,7 @@ int plugins_load(server *srv) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", module, "plugin init failed" );
 
 			plugin_free(p);
+			buffer_free(tmp_buf);
 			return -1;
 		}
 #if 0
@@ -290,6 +296,7 @@ int plugins_load(server *srv) {
 		plugins_register(srv, p);
 	}
 
+	buffer_free(tmp_buf);
 	return 0;
 }
 #endif /* defined(LIGHTTPD_STATIC) */

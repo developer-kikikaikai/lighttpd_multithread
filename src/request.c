@@ -987,7 +987,7 @@ int http_request_parse(server *srv, connection *con) {
 
 								/* split on , */
 
-								vals = srv->split_vals;
+								vals = con->split_vals;
 
 								array_reset(vals);
 

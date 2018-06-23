@@ -179,8 +179,8 @@ static handler_t http_response_physical_path_check(server *srv, connection *con)
 
 		for (char *pprev = pathinfo; pathinfo; pprev = pathinfo, pathinfo = strchr(pathinfo+1, '/')) {
 			stat_cache_entry *nsce = NULL;
-			buffer_copy_string_len(srv->tmp_buf, con->physical.path->ptr, pathinfo - con->physical.path->ptr);
-			if (HANDLER_ERROR == stat_cache_get_entry(srv, con, srv->tmp_buf, &nsce)) {
+			buffer_copy_string_len(con->tmp_buf, con->physical.path->ptr, pathinfo - con->physical.path->ptr);
+			if (HANDLER_ERROR == stat_cache_get_entry(srv, con, con->tmp_buf, &nsce)) {
 				pathinfo = pathinfo != pprev ? pprev : NULL;
 				break;
 			}
@@ -357,9 +357,9 @@ handler_t http_response_prepare(server *srv, connection *con) {
 		} else if (con->request.http_method == HTTP_METHOD_CONNECT) {
 			buffer_copy_buffer(con->uri.path, con->uri.path_raw);
 		} else {
-			buffer_copy_buffer(srv->tmp_buf, con->uri.path_raw);
-			buffer_urldecode_path(srv->tmp_buf);
-			buffer_path_simplify(con->uri.path, srv->tmp_buf);
+			buffer_copy_buffer(con->tmp_buf, con->uri.path_raw);
+			buffer_urldecode_path(con->tmp_buf);
+			buffer_path_simplify(con->uri.path, con->tmp_buf);
 		}
 
 		con->conditional_is_valid[COMP_SERVER_SOCKET] = 1;       /* SERVERsocket */

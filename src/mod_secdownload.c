@@ -521,14 +521,14 @@ URIHANDLER_FUNC(mod_secdownload_uri_handler) {
 			rel_uri_end = strchr(rel_uri_end+1, '/');
 		} while (rel_uri_end && --count);
 		if (rel_uri_end) {
-			buffer_copy_string_len(srv->tmp_buf, protected_path,
+			buffer_copy_string_len(con->tmp_buf, protected_path,
 					       rel_uri_end - protected_path);
-			protected_path = srv->tmp_buf->ptr;
+			protected_path = con->tmp_buf->ptr;
 		}
 	}
 
 	if (p->conf.hash_querystr && !buffer_is_empty(con->uri.query)) {
-		buffer *b = srv->tmp_buf;
+		buffer *b = con->tmp_buf;
 		if (protected_path != b->ptr) {
 			buffer_copy_string(b, protected_path);
 		}

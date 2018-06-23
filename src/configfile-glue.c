@@ -466,9 +466,9 @@ CONFCACHE_LOCK
 
 		/* we only have the request method as const char but we need a buffer for comparing */
 
-		buffer_copy_string(srv->tmp_buf, method);
+		buffer_copy_string(con->tmp_buf, method);
 
-		l = srv->tmp_buf;
+		l = con->tmp_buf;
 
 		break;
 	}

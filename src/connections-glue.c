@@ -45,9 +45,11 @@ const char *connection_get_short_state(connection_state_t state) {
 
 int connection_set_state(server *srv, connection *con, connection_state_t state) {
 
+	fprintf(stderr, "thread:%x, %s before state %d to %d\n", (unsigned int)pthread_self(), __func__, con->state, state);
 	UNUSED(srv);
 	con->state = state;
 	state_machine_set_state(con->state_machine, state);
+	fprintf(stderr, "thread:%x, %s current state:%d(state_machine:%d)\n", (unsigned int)pthread_self(), __func__, con->state, state_machine_get_current_state(con->state_machine));
 	//state_machine_show(con->state_machine);
 	return 0;
 }

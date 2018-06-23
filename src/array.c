@@ -215,7 +215,7 @@ static data_unset **array_find_or_insert(array *a, data_unset *entry) {
 	if (buffer_is_empty(entry->key) || entry->is_index_key) {
 		buffer_copy_int(entry->key, a->unique_ndx++);
 		entry->is_index_key = 1;
-		force_assert(0 != a->unique_ndx); /* must not wrap or we'll get problems */
+	//	force_assert(0 != a->unique_ndx); /* must not wrap or we'll get problems */
 	}
 
 	/* try to find the entry */

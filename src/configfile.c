@@ -1393,8 +1393,9 @@ int config_set_defaults(server *srv) {
 		array_insert_unique(srv->srvconf.upload_tempdirs, (data_unset *)ds);
 	}
 
+	buffer * tmp_buf = buffer_init();
 	if (srv->srvconf.upload_tempdirs->used) {
-		buffer * const b = srv->tmp_buf;
+		buffer * const b = tmp_buf;
 		size_t len;
 		if (!buffer_string_is_empty(srv->srvconf.changeroot)) {
 			buffer_copy_buffer(b, srv->srvconf.changeroot);
@@ -1425,37 +1426,37 @@ int config_set_defaults(server *srv) {
 	if (buffer_string_is_empty(s->document_root)) {
 		log_error_write(srv, __FILE__, __LINE__, "s",
 				"a default document-root has to be set");
-
+		buffer_free(tmp_buf);
 		return -1;
 	}
 
-	buffer_copy_buffer(srv->tmp_buf, s->document_root);
+	buffer_copy_buffer(tmp_buf, s->document_root);
 
-	buffer_to_lower(srv->tmp_buf);
+	buffer_to_lower(tmp_buf);
 
 	if (2 == s->force_lowercase_filenames) { /* user didn't configure it in global section? */
 		s->force_lowercase_filenames = 0; /* default to 0 */
 
-		if (0 == stat(srv->tmp_buf->ptr, &st1)) {
+		if (0 == stat(tmp_buf->ptr, &st1)) {
 			int is_lower = 0;
 
-			is_lower = buffer_is_equal(srv->tmp_buf, s->document_root);
+			is_lower = buffer_is_equal(tmp_buf, s->document_root);
 
 			/* lower-case existed, check upper-case */
-			buffer_copy_buffer(srv->tmp_buf, s->document_root);
+			buffer_copy_buffer(tmp_buf, s->document_root);
 
-			buffer_to_upper(srv->tmp_buf);
+			buffer_to_upper(tmp_buf);
 
 			/* we have to handle the special case that upper and lower-casing results in the same filename
 			 * as in server.document-root = "/" or "/12345/" */
 
-			if (is_lower && buffer_is_equal(srv->tmp_buf, s->document_root)) {
+			if (is_lower && buffer_is_equal(tmp_buf, s->document_root)) {
 				/* lower-casing and upper-casing didn't result in
 				 * an other filename, no need to stat(),
 				 * just assume it is case-sensitive. */
 
 				s->force_lowercase_filenames = 0;
-			} else if (0 == stat(srv->tmp_buf->ptr, &st2)) {
+			} else if (0 == stat(tmp_buf->ptr, &st2)) {
 
 				/* upper case exists too, doesn't the FS handle this ? */
 
@@ -1474,5 +1475,6 @@ int config_set_defaults(server *srv) {
 		srv->srvconf.port = s->ssl_enabled ? 443 : 80;
 	}
 
+	buffer_free(tmp_buf);
 	return 0;
 }

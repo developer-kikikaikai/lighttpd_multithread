@@ -233,7 +233,6 @@ static server *server_init(void) {
 	srv->x = buffer_init();
 
 	CLEAN(errorlog_buf);
-	CLEAN(tmp_buf);
 	srv->empty_string = buffer_init_string("");
 	CLEAN(cond_check_buf);
 
@@ -247,7 +246,6 @@ static server *server_init(void) {
 	CLEAN(srvconf.pid_file);
 	CLEAN(srvconf.syslog_facility);
 
-	CLEAN(tmp_chunk_len);
 #undef CLEAN
 
 	server_init_ts(srv);
@@ -291,7 +289,6 @@ static server *server_init(void) {
 	srv->errorlog_fd = STDERR_FILENO;
 	srv->errorlog_mode = ERRORLOG_FD;
 
-	srv->split_vals = array_init();
 	srv->request_env = plugins_call_handle_request_env;
 
 	return srv;
@@ -311,7 +308,6 @@ static void server_free(server *srv) {
 	buffer_free(srv->x);
 
 	CLEAN(errorlog_buf);
-	CLEAN(tmp_buf);
 	CLEAN(empty_string);
 	CLEAN(cond_check_buf);
 
@@ -328,7 +324,6 @@ static void server_free(server *srv) {
 	CLEAN(srvconf.xattr_name);
 	CLEAN(srvconf.syslog_facility);
 
-	CLEAN(tmp_chunk_len);
 #undef CLEAN
 
 #if 0
@@ -373,7 +368,6 @@ static void server_free(server *srv) {
 	}
 
 	array_free(srv->srvconf.modules);
-	array_free(srv->split_vals);
 
 	li_rand_cleanup();
 
@@ -1388,14 +1382,16 @@ static int server_main (server * const srv, int argc, char **argv) {
 
 	/* write pid file */
 	if (pid_fd > 2) {
-		buffer_copy_int(srv->tmp_buf, srv->pid);
-		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("\n"));
-		if (-1 == write_all(pid_fd, CONST_BUF_LEN(srv->tmp_buf))) {
+		buffer *tmp_buf = buffer_init();
+		buffer_copy_int(tmp_buf, srv->pid);
+		buffer_append_string_len(tmp_buf, CONST_STR_LEN("\n"));
+		if (-1 == write_all(pid_fd, CONST_BUF_LEN(tmp_buf))) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "Couldn't write pid file:", strerror(errno));
 			close(pid_fd);
 			pid_fd = -1;
 			return -1;
 		}
+		buffer_free(tmp_buf);
 	} else if (pid_fd < -2) {
 		pid_fd = -pid_fd;
 	}

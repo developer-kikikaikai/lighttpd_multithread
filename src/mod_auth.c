@@ -452,11 +452,11 @@ static handler_t mod_auth_send_401_unauthorized_basic(server *srv, connection *c
 	con->http_status = 401;
 	con->mode = DIRECT;
 
-	buffer_copy_string_len(srv->tmp_buf, CONST_STR_LEN("Basic realm=\""));
-	buffer_append_string_buffer(srv->tmp_buf, realm);
-	buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("\", charset=\"UTF-8\""));
+	buffer_copy_string_len(con->tmp_buf, CONST_STR_LEN("Basic realm=\""));
+	buffer_append_string_buffer(con->tmp_buf, realm);
+	buffer_append_string_len(con->tmp_buf, CONST_STR_LEN("\", charset=\"UTF-8\""));
 
-	response_header_insert(srv, con, CONST_STR_LEN("WWW-Authenticate"), CONST_BUF_LEN(srv->tmp_buf));
+	response_header_insert(srv, con, CONST_STR_LEN("WWW-Authenticate"), CONST_BUF_LEN(con->tmp_buf));
 
 	return HANDLER_FINISHED;
 }
@@ -865,18 +865,18 @@ static handler_t mod_auth_send_401_unauthorized_digest(server *srv, connection *
 	con->http_status = 401;
 	con->mode = DIRECT;
 
-	buffer_copy_string_len(srv->tmp_buf, CONST_STR_LEN("Digest realm=\""));
-	buffer_append_string_buffer(srv->tmp_buf, realm);
-	buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("\", charset=\"UTF-8\", nonce=\""));
-	buffer_append_uint_hex(srv->tmp_buf, (uintmax_t)cur_ts);
-	buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN(":"));
-	buffer_append_string(srv->tmp_buf, hh);
-	buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("\", qop=\"auth\""));
+	buffer_copy_string_len(con->tmp_buf, CONST_STR_LEN("Digest realm=\""));
+	buffer_append_string_buffer(con->tmp_buf, realm);
+	buffer_append_string_len(con->tmp_buf, CONST_STR_LEN("\", charset=\"UTF-8\", nonce=\""));
+	buffer_append_uint_hex(con->tmp_buf, (uintmax_t)cur_ts);
+	buffer_append_string_len(con->tmp_buf, CONST_STR_LEN(":"));
+	buffer_append_string(con->tmp_buf, hh);
+	buffer_append_string_len(con->tmp_buf, CONST_STR_LEN("\", qop=\"auth\""));
 	if (nonce_stale) {
-		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN(", stale=true"));
+		buffer_append_string_len(con->tmp_buf, CONST_STR_LEN(", stale=true"));
 	}
 
-	response_header_insert(srv, con, CONST_STR_LEN("WWW-Authenticate"), CONST_BUF_LEN(srv->tmp_buf));
+	response_header_insert(srv, con, CONST_STR_LEN("WWW-Authenticate"), CONST_BUF_LEN(con->tmp_buf));
 
 	return HANDLER_FINISHED;
 }

@@ -146,6 +146,7 @@ static int network_write_file_chunk_no_mmap(server *srv, int fd, chunkqueue *cq,
     chunk* const c = cq->first;
     off_t offset, toSend;
     ssize_t wr;
+    int ret=-1;
 
     force_assert(c->offset >= 0 && c->offset <= c->file.length);
 
@@ -161,25 +162,30 @@ static int network_write_file_chunk_no_mmap(server *srv, int fd, chunkqueue *cq,
     if (0 != chunkqueue_open_file_chunk(srv, cq)) return -1;
 
     if (toSend > 64*1024) toSend = 64*1024; /* max read 64kb in one step */
-    buffer_string_prepare_copy(srv->tmp_buf, toSend);
+    buffer *tmp_buf = buffer_init();
+    buffer_string_prepare_copy(tmp_buf, toSend);
 
     if (-1 == lseek(c->file.fd, offset, SEEK_SET)) {
         log_error_write(srv, __FILE__, __LINE__, "ss","lseek:",strerror(errno));
-        return -1;
+        goto end;
     }
-    if (-1 == (toSend = read(c->file.fd, srv->tmp_buf->ptr, toSend))) {
+    if (-1 == (toSend = read(c->file.fd, tmp_buf->ptr, toSend))) {
         log_error_write(srv, __FILE__, __LINE__, "ss","read:",strerror(errno));
-        return -1;
+        goto end;
     }
 
-    wr = network_write_data_len(fd, srv->tmp_buf->ptr, toSend);
+    wr = network_write_data_len(fd, tmp_buf->ptr, toSend);
     if (wr >= 0) {
         *p_max_bytes -= wr;
         chunkqueue_mark_written(cq, wr);
-        return (wr > 0 && wr == toSend) ? 0 : -3;
+        ret = (wr > 0 && wr == toSend) ? 0 : -3;
     } else {
-        return network_write_error(srv, fd);
+        ret = network_write_error(srv, fd);
     }
+
+end:
+    buffer_free(tmp_buf);
+    return ret;
 }
 
 #endif
