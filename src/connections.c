@@ -102,7 +102,7 @@ static int connection_handle_base(int (*handle)(server *srv, connection *con), v
 				connection_get_state(http_con->con->state));
 	}
 
-	fprintf(stderr, "thread:%x, %s state %s\n", (unsigned int)pthread_self(), __func__, connection_get_state(http_con->con->state));
+	//fprintf(stderr, "thread:%x, %s state %s\n", (unsigned int)pthread_self(), __func__, connection_get_state(http_con->con->state));
 	if( handle(http_con->srv, http_con->con) == -1 || http_con->ostate != (int)http_con->con->state ) {
 		http_con->ostate = http_con->con->state;
 		return state_machine_call_event(http_con->con->state_machine, CON_EVENT_RUN, arg, 0, NULL);
@@ -207,8 +207,8 @@ static int connection_del(server *srv, connection *con) {
 
 static int connection_close(server *srv, connection *con) {
 	int fd = con->fd;
-	if (con->fd < 0){fprintf(stderr, "%s decrement fd\n", __func__) ;con->fd = -con->fd;}
-	fprintf(stderr, "[%x]%s closed\n",(unsigned int )pthread_self(),  __func__);
+	if (con->fd < 0)con->fd = -con->fd;
+//	fprintf(stderr, "[%x]%s\n",(unsigned int )pthread_self(),  __func__);
 
 	plugins_call_handle_connection_close(srv, con);
 
@@ -228,6 +228,7 @@ static int connection_close(server *srv, connection *con) {
 	else {
 		server_decrement_cur_fds();
 	}
+//	fprintf(stderr, "[%x]%s closed\n",(unsigned int )pthread_self(),  __func__);
 
 	if (srv->srvconf.log_state_handling) {
 		log_error_write(srv, __FILE__, __LINE__, "sd",
@@ -766,7 +767,7 @@ void connections_free(server *srv) {
 
 
 static int connection_reset(server *srv, connection *con) {
-	fprintf(stderr, "[%x]%s\n",(unsigned int )pthread_self(),  __func__);
+//	fprintf(stderr, "[%x]%s\n",(unsigned int )pthread_self(),  __func__);
 	plugins_call_connection_reset(srv, con);
 
 	connection_response_reset(srv, con);
@@ -840,13 +841,13 @@ static int connection_reset(server *srv, connection *con) {
 	/*(error_handler_saved_method value is not valid unless error_handler_saved_status is set)*/
 
 	config_setup_connection(srv, con);
-	fprintf(stderr, "[%x]%s exit\n",(unsigned int )pthread_self(),  __func__);
+//	fprintf(stderr, "[%x]%s exit\n",(unsigned int )pthread_self(),  __func__);
 
 	return 0;
 }
 
 static int connection_handle_request_start_state(server *srv, connection *con) {
-	fprintf(stderr, "request start, thread:%x, con=%p\n", (unsigned int)pthread_self(), (void *)con);
+//	fprintf(stderr, "request start, thread:%x, con=%p\n", (unsigned int)pthread_self(), (void *)con);
 	con->request_start = server_get_cur_ts();
 	con->read_idle_ts = con->request_start;
 	if (con->conf.high_precision_timestamps)

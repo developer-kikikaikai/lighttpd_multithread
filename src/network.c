@@ -154,7 +154,6 @@ static int network_server_init(server *srv, buffer *host_token, size_t sidx, int
 	}
 #endif
 
-	log_error_write(srv, __FILE__, __LINE__, "s", "enter init");
 	if (buffer_string_is_empty(host_token)) {
 		log_error_write(srv, __FILE__, __LINE__, "s", "value of $SERVER[\"socket\"] must not be empty");
 		return -1;
@@ -455,7 +454,6 @@ int network_register_fdevents(server *srv) {
 	for (i = 0; i < srv->srv_sockets.used; i++) {
 		server_socket *srv_socket = srv->srv_sockets.ptr[i];
 
-		log_error_write(srv, __FILE__, __LINE__, "sd", "register start!!", i);
 		fdevent_register(srv->ev, srv_socket->fd, network_server_handle_fdevent, srv_socket);
 		fdevent_event_set(srv->ev, &(srv_socket->fde_ndx), srv_socket->fd, FDEVENT_IN);
 	}
