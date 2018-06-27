@@ -49,7 +49,8 @@ struct connection_event_handler_t {
 	/*to add event*/
 	EventSubscriber subscriber;
 	connection_request_ctx_t ctx;
-	EventTPoolFDData eventdata;
+	EventTPoolThreadInfo eventdata;
+//	EventTPoolFDData eventdata;
 };
 
 static inline int connection_tpoolevent2fdevent(int eventflag) {
@@ -1502,10 +1503,6 @@ static int connection_write_cq(server *srv, connection *con, chunkqueue *cq, off
 }
 
 static ConEventHandler connection_client_handler_register(server *srv, connection *con) {
-	connection_request_ctx_t * req=malloc(sizeof(*req));
-	force_assert(req);
-	req->srv = srv;
-	req->con = con;
 	return connection_fdevent_add(srv, con, con->fd, connection_handle_fdevent, NULL, 0);
 }
 
