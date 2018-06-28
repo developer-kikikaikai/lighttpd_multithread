@@ -291,6 +291,7 @@ static server *server_init(void) {
 
 	srv->request_env = plugins_call_handle_request_env;
 
+	srv->handle = dp_timelog_init(",", 1024, 8192, 1);
 	return srv;
 }
 
@@ -371,6 +372,7 @@ static void server_free(server *srv) {
 
 	li_rand_cleanup();
 
+	dp_timelog_exit(srv->handle);
 	free(srv);
 }
 

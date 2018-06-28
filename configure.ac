@@ -1223,6 +1223,7 @@ dnl check whether main needs -lstate_machine
 AC_SEARCH_LIBS([event_tpool_manager_new], [event_threadpool])
 AC_SEARCH_LIBS([state_machine_new], [state_machine])
 AC_SEARCH_LIBS([mpool_create], [memorypool])
+AC_SEARCH_LIBS([dp_timelog_init], [dputil])
 
 dnl Check for dpfc
 AC_MSG_NOTICE([----------------------------------------])
