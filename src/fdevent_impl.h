@@ -83,6 +83,18 @@ typedef struct {
 } buffer_int;
 #endif
 
+struct fdevent_callback_t {
+    int (*reset)(struct fdevents *ev);
+    void (*free)(struct fdevents *ev);
+    int (*event_set)(struct fdevents *ev, int fde_ndx, int fd, int events);
+    int (*event_del)(struct fdevents *ev, int fde_ndx, int fd);
+    int (*event_get_revent)(struct fdevents *ev, size_t ndx);
+    int (*event_get_fd)(struct fdevents *ev, size_t ndx);
+    int (*event_next_fdndx)(struct fdevents *ev, int ndx);
+    int (*poll)(struct fdevents *ev, int timeout_ms);
+};
+typedef struct fdevent_callback_t fdevent_callback_t, *FDEventCallbask;
+
 struct fdevents {
     struct server *srv;
     fdevent_handler_t type;
@@ -131,17 +143,6 @@ struct fdevents {
   #ifdef FDEVENT_USE_LIBEV
     struct ev_loop *libev_loop;
   #endif
-    int (*reset)(struct fdevents *ev);
-    void (*free)(struct fdevents *ev);
-
-    int (*event_set)(struct fdevents *ev, int fde_ndx, int fd, int events);
-    int (*event_del)(struct fdevents *ev, int fde_ndx, int fd);
-    int (*event_get_revent)(struct fdevents *ev, size_t ndx);
-    int (*event_get_fd)(struct fdevents *ev, size_t ndx);
-
-    int (*event_next_fdndx)(struct fdevents *ev, int ndx);
-
-    int (*poll)(struct fdevents *ev, int timeout_ms);
 };
 
 int fdevent_select_init(struct fdevents *ev);
@@ -152,4 +153,6 @@ int fdevent_solaris_port_init(struct fdevents *ev);
 int fdevent_freebsd_kqueue_init(struct fdevents *ev);
 int fdevent_libev_init(struct fdevents *ev);
 
+FDEventCallbask fdevent_get(void);
+void fdevent_set(FDEventCallbask callback);
 #endif

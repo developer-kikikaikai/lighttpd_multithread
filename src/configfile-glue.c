@@ -23,6 +23,9 @@
  *
  */
 
+static pthread_mutex_t cache_lock=PTHREAD_MUTEX_INITIALIZER;
+#define CONFCACHE_LOCK pthread_mutex_lock(&cache_lock);
+#define CONFCACHE_UNLOCK pthread_mutex_unlock(&cache_lock);
 
 /* handle global options */
 
@@ -278,7 +281,9 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 	buffer *l;
 	server_socket *srv_sock = con->srv_socket;
 	cond_cache_t *cache = &con->cond_cache[dc->context_ndx];
+	cond_result_t result=COND_RESULT_FALSE;
 
+CONFCACHE_LOCK
 	/* check parent first */
 	if (dc->parent && dc->parent->context_ndx) {
 		/**
@@ -293,11 +298,13 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 		switch (config_check_cond_cached(srv, con, dc->parent)) {
 		case COND_RESULT_UNSET:
 			/* decide later */
-			return COND_RESULT_UNSET;
+			result=COND_RESULT_UNSET;
+			goto end;
+			break;
 		case COND_RESULT_SKIP:
 		case COND_RESULT_FALSE:
 			/* failed precondition */
-			return COND_RESULT_SKIP;
+			result=COND_RESULT_SKIP;
 		case COND_RESULT_TRUE:
 			/* proceed */
 			break;
@@ -317,11 +324,13 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 		switch (config_check_cond_cached(srv, con, dc->prev)) {
 		case COND_RESULT_UNSET:
 			/* decide later */
-			return COND_RESULT_UNSET;
+			result=COND_RESULT_UNSET;
+			goto end;
 		case COND_RESULT_SKIP:
 		case COND_RESULT_TRUE:
 			/* failed precondition */
-			return COND_RESULT_SKIP;
+			result=COND_RESULT_SKIP;
+			goto end;
 		case COND_RESULT_FALSE:
 			/* proceed */
 			break;
@@ -336,19 +345,24 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 				"not available yet");
 		}
 
-		return COND_RESULT_UNSET;
+		result=COND_RESULT_UNSET;
+		goto end;
 	}
 
 	/* if we had a real result before and weren't cleared just return it */
 	switch (cache->local_result) {
 	case COND_RESULT_TRUE:
 	case COND_RESULT_FALSE:
-		return cache->local_result;
+		result=cache->local_result;
+		goto end;
 	default:
 		break;
 	}
 
-	if (CONFIG_COND_ELSE == dc->cond) return COND_RESULT_TRUE;
+	if (CONFIG_COND_ELSE == dc->cond) {
+		result=COND_RESULT_TRUE;
+		goto end;
+	}
 
 	/* pass the rules */
 
@@ -408,9 +422,15 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 		     dc->cond == CONFIG_COND_NE) &&
 		    (NULL != (nm_slash = strchr(dc->string->ptr, '/')))) {
 			switch (config_addrbuf_eq_remote_ip_mask(srv, dc->string, nm_slash, &con->dst_addr)) {
-			case  1: return (dc->cond == CONFIG_COND_EQ) ? COND_RESULT_TRUE : COND_RESULT_FALSE;
-			case  0: return (dc->cond == CONFIG_COND_EQ) ? COND_RESULT_FALSE : COND_RESULT_TRUE;
-			case -1: return COND_RESULT_FALSE; /*(error parsing configfile entry)*/
+			case  1: 
+				result = (dc->cond == CONFIG_COND_EQ) ? COND_RESULT_TRUE : COND_RESULT_FALSE;
+				goto end;
+			case  0:
+				result = (dc->cond == CONFIG_COND_EQ) ? COND_RESULT_FALSE : COND_RESULT_TRUE;
+				goto end;
+			case -1:
+				result = COND_RESULT_FALSE;
+				goto end; /*(error parsing configfile entry)*/
 			}
 		}
 		l = con->dst_addr_buf;
@@ -446,14 +466,15 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 
 		/* we only have the request method as const char but we need a buffer for comparing */
 
-		buffer_copy_string(srv->tmp_buf, method);
+		buffer_copy_string(con->tmp_buf, method);
 
-		l = srv->tmp_buf;
+		l = con->tmp_buf;
 
 		break;
 	}
 	default:
-		return COND_RESULT_FALSE;
+		result = COND_RESULT_FALSE;
+		goto end;
 	}
 
 	if (NULL == l) {
@@ -461,7 +482,8 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 			log_error_write(srv, __FILE__, __LINE__,  "bsbs", dc->comp_key,
 					"(", l, ") compare to NULL");
 		}
-		return COND_RESULT_FALSE;
+		result = COND_RESULT_FALSE;
+		goto end;
 	}
 
 	if (con->conf.log_condition_handling) {
@@ -472,9 +494,11 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 	case CONFIG_COND_NE:
 	case CONFIG_COND_EQ:
 		if (buffer_is_equal(l, dc->string)) {
-			return (dc->cond == CONFIG_COND_EQ) ? COND_RESULT_TRUE : COND_RESULT_FALSE;
+			result = (dc->cond == CONFIG_COND_EQ) ? COND_RESULT_TRUE : COND_RESULT_FALSE;
+			goto end;
 		} else {
-			return (dc->cond == CONFIG_COND_EQ) ? COND_RESULT_FALSE : COND_RESULT_TRUE;
+			result = (dc->cond == CONFIG_COND_EQ) ? COND_RESULT_FALSE : COND_RESULT_TRUE;
+			goto end;
 		}
 		break;
 #ifdef HAVE_PCRE_H
@@ -491,10 +515,10 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 		cache->patterncount = n;
 		if (n > 0) {
 			cache->comp_value = l;
-			return (dc->cond == CONFIG_COND_MATCH) ? COND_RESULT_TRUE : COND_RESULT_FALSE;
+			result = (dc->cond == CONFIG_COND_MATCH) ? COND_RESULT_TRUE : COND_RESULT_FALSE;
 		} else {
 			/* cache is already cleared */
-			return (dc->cond == CONFIG_COND_MATCH) ? COND_RESULT_FALSE : COND_RESULT_TRUE;
+			result = (dc->cond == CONFIG_COND_MATCH) ? COND_RESULT_FALSE : COND_RESULT_TRUE;
 		}
 		break;
 	}
@@ -504,7 +528,9 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 		break;
 	}
 
-	return COND_RESULT_FALSE;
+end:
+CONFCACHE_UNLOCK
+	return result;
 }
 
 static cond_result_t config_check_cond_cached(server *srv, connection *con, data_config *dc) {
@@ -595,7 +621,6 @@ void config_cond_cache_reset_item(server *srv, connection *con, comp_key_t item)
  */
 void config_cond_cache_reset(server *srv, connection *con) {
 	size_t i;
-
 	/* resetting all entries; no need to follow children as in config_cond_cache_reset_item */
 	for (i = 0; i < srv->config_context->used; i++) {
 		con->cond_cache[i].result = COND_RESULT_UNSET;

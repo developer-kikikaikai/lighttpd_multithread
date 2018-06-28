@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 void
 network_accept_tcp_nagle_disable (const int fd)
@@ -49,7 +50,7 @@ static handler_t network_server_handle_fdevent(server *srv, void *context, int r
 	int loops = 0;
 
 	UNUSED(context);
-
+	//log_error_write(srv, __FILE__, __LINE__, "sdd","accept try", srv_socket->fd, revents);
 	if (0 == (revents & FDEVENT_IN)) {
 		log_error_write(srv, __FILE__, __LINE__, "sdd",
 				"strange event for server socket",
@@ -73,6 +74,7 @@ static void network_host_normalize_addr_str(buffer *host, sock_addr *addr) {
 }
 
 static int network_host_parse_addr(server *srv, sock_addr *addr, socklen_t *addr_len, buffer *host, int use_ipv6) {
+    int ret=-1;
     char *h;
     char *colon = NULL;
     const char *chost;
@@ -94,15 +96,16 @@ static int network_host_parse_addr(server *srv, sock_addr *addr, socklen_t *addr
         return -1;
       #endif
     }
-    buffer_copy_buffer(srv->tmp_buf, host);
-    h = srv->tmp_buf->ptr;
+    buffer * tmp_buf=buffer_init();
+    buffer_copy_buffer(tmp_buf, host);
+    h = tmp_buf->ptr;
     if (h[0] == '[') {
         family = AF_INET6;
         if ((h = strchr(h, ']'))) {
             *h++ = '\0';
             if (*h == ':') colon = h;
         } /*(else should not happen; validated in configparser.y)*/
-        h = srv->tmp_buf->ptr+1;
+        h = tmp_buf->ptr+1;
     }
     else {
         colon = strrchr(h, ':');
@@ -113,14 +116,18 @@ static int network_host_parse_addr(server *srv, sock_addr *addr, socklen_t *addr
         if (port == 0 || port > 65535) {
             log_error_write(srv, __FILE__, __LINE__, "sd",
                             "port not set or out of range:", port);
-            return -1;
+            goto end;
         }
     }
     chost = *h ? h : family == AF_INET ? "0.0.0.0" : "::";
     if (1 != sock_addr_from_str_hints(srv,addr,addr_len,chost,family,port)) {
-        return -1;
+        goto end;
     }
-    return 0;
+    ret = 0;
+
+end:
+    buffer_free(tmp_buf);
+    return ret;
 }
 
 static int network_server_init(server *srv, buffer *host_token, size_t sidx, int stdin_fd) {
@@ -294,7 +301,7 @@ static int network_server_init(server *srv, buffer *host_token, size_t sidx, int
 #endif
 
 	/* */
-	srv->cur_fds = srv_socket->fd;
+	server_set_cur_fds(srv_socket->fd);
 
 	if (fdevent_set_so_reuseaddr(srv_socket->fd, 1) < 0) {
 		log_error_write(srv, __FILE__, __LINE__, "ss", "setsockopt(SO_REUSEADDR) failed:", strerror(errno));
@@ -451,4 +458,33 @@ int network_register_fdevents(server *srv) {
 		fdevent_event_set(srv->ev, &(srv_socket->fde_ndx), srv_socket->fd, FDEVENT_IN);
 	}
 	return 0;
+}
+
+static int server_cur_fds_g;    /* currently used fds */
+static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+#define SERVRE_FDS_LOCK pthread_mutex_lock(&lock);
+#define SERVRE_FDS_UNLOCK pthread_mutex_unlock(&lock);
+
+//don't need lock because it is called by initialize sequence of main thread (before starting other thread) now
+void server_set_cur_fds(int fd) {
+	server_cur_fds_g=fd;
+}
+
+int  server_get_cur_fds(void) {
+	int ret=0;
+SERVRE_FDS_LOCK
+	ret = server_cur_fds_g;
+SERVRE_FDS_UNLOCK
+	return ret;
+}
+void server_increment_cur_fds(void) {
+SERVRE_FDS_LOCK
+	server_cur_fds_g++;
+SERVRE_FDS_UNLOCK
+}
+
+void server_decrement_cur_fds(void) {
+SERVRE_FDS_LOCK
+	server_cur_fds_g--;
+SERVRE_FDS_UNLOCK
 }

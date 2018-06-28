@@ -452,11 +452,11 @@ static handler_t mod_auth_send_401_unauthorized_basic(server *srv, connection *c
 	con->http_status = 401;
 	con->mode = DIRECT;
 
-	buffer_copy_string_len(srv->tmp_buf, CONST_STR_LEN("Basic realm=\""));
-	buffer_append_string_buffer(srv->tmp_buf, realm);
-	buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("\", charset=\"UTF-8\""));
+	buffer_copy_string_len(con->tmp_buf, CONST_STR_LEN("Basic realm=\""));
+	buffer_append_string_buffer(con->tmp_buf, realm);
+	buffer_append_string_len(con->tmp_buf, CONST_STR_LEN("\", charset=\"UTF-8\""));
 
-	response_header_insert(srv, con, CONST_STR_LEN("WWW-Authenticate"), CONST_BUF_LEN(srv->tmp_buf));
+	response_header_insert(srv, con, CONST_STR_LEN("WWW-Authenticate"), CONST_BUF_LEN(con->tmp_buf));
 
 	return HANDLER_FINISHED;
 }
@@ -818,13 +818,13 @@ static handler_t mod_auth_check_digest(server *srv, connection *con, void *p_d, 
 	 * but that is highly unlikely within a 10 min (moving) window of valid
 	 * time relative to current time (now) */
 	{
-		time_t ts = 0;
+		time_t ts = 0, cur_ts = server_get_cur_ts();
 		const unsigned char * const nonce_uns = (unsigned char *)nonce;
 		for (i = 0; i < 8 && light_isxdigit(nonce_uns[i]); ++i) {
 			ts = (ts << 4) + hex2int(nonce_uns[i]);
 		}
 		if (nonce[i] != ':'
-		    || ts > srv->cur_ts || srv->cur_ts - ts > 600) { /*(10 mins)*/
+		    || ts > cur_ts || cur_ts - ts > 600) { /*(10 mins)*/
 			/* nonce is stale; have client regenerate digest */
 			buffer_free(b);
 			return mod_auth_send_401_unauthorized_digest(srv, con, require->realm, 1);
@@ -850,7 +850,8 @@ static handler_t mod_auth_send_401_unauthorized_digest(server *srv, connection *
 	/* generate shared-secret */
 	li_MD5_Init(&Md5Ctx);
 
-	li_itostrn(hh, sizeof(hh), srv->cur_ts);
+	time_t cur_ts = server_get_cur_ts();
+	li_itostrn(hh, sizeof(hh), cur_ts);
 	li_MD5_Update(&Md5Ctx, (unsigned char *)hh, strlen(hh));
 	li_itostrn(hh, sizeof(hh), li_rand_pseudo());
 	li_MD5_Update(&Md5Ctx, (unsigned char *)hh, strlen(hh));
@@ -864,18 +865,18 @@ static handler_t mod_auth_send_401_unauthorized_digest(server *srv, connection *
 	con->http_status = 401;
 	con->mode = DIRECT;
 
-	buffer_copy_string_len(srv->tmp_buf, CONST_STR_LEN("Digest realm=\""));
-	buffer_append_string_buffer(srv->tmp_buf, realm);
-	buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("\", charset=\"UTF-8\", nonce=\""));
-	buffer_append_uint_hex(srv->tmp_buf, (uintmax_t)srv->cur_ts);
-	buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN(":"));
-	buffer_append_string(srv->tmp_buf, hh);
-	buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("\", qop=\"auth\""));
+	buffer_copy_string_len(con->tmp_buf, CONST_STR_LEN("Digest realm=\""));
+	buffer_append_string_buffer(con->tmp_buf, realm);
+	buffer_append_string_len(con->tmp_buf, CONST_STR_LEN("\", charset=\"UTF-8\", nonce=\""));
+	buffer_append_uint_hex(con->tmp_buf, (uintmax_t)cur_ts);
+	buffer_append_string_len(con->tmp_buf, CONST_STR_LEN(":"));
+	buffer_append_string(con->tmp_buf, hh);
+	buffer_append_string_len(con->tmp_buf, CONST_STR_LEN("\", qop=\"auth\""));
 	if (nonce_stale) {
-		buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN(", stale=true"));
+		buffer_append_string_len(con->tmp_buf, CONST_STR_LEN(", stale=true"));
 	}
 
-	response_header_insert(srv, con, CONST_STR_LEN("WWW-Authenticate"), CONST_BUF_LEN(srv->tmp_buf));
+	response_header_insert(srv, con, CONST_STR_LEN("WWW-Authenticate"), CONST_BUF_LEN(con->tmp_buf));
 
 	return HANDLER_FINISHED;
 }

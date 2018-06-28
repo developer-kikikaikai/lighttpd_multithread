@@ -5,6 +5,7 @@
 #include "base.h"
 #include "buffer.h"
 #include "log.h"
+#include "server.h"
 
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -12,14 +13,32 @@
 
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <time.h>
+#include <pthread.h>
+#include <sys/eventfd.h>
 
 #ifdef SOCK_CLOEXEC
 static int use_sock_cloexec;
 #endif
+
+static void fdnode_free(fdnode *fdn);
+static int fdevent_event_get_revent(fdevents *ev, size_t ndx);
+static int fdevent_event_get_fd(fdevents *ev, size_t ndx);
+static int fdevent_event_next_fdndx(fdevents *ev, int ndx);
+static inline void fdevent_unregister_self(fdevents *ev, int fd);
+static inline void fdevent_event_del_self(fdevents *ev, int *fde_ndx, int fd);
+static inline void fdevent_event_set_self(fdevents *ev, int *fde_ndx, int fd, int events);
+static inline void fdevent_event_add_self(fdevents *ev, int *fde_ndx, int fd, int event);
+static inline void fdevent_event_clr_self(fdevents *ev, int *fde_ndx, int fd, int event);
+
+//if use function only server, don't need to lock
+static pthread_mutex_t event_lock=PTHREAD_MUTEX_INITIALIZER;
+#define EVE_LOCK pthread_mutex_lock(&event_lock);
+#define EVE_UNLOCK pthread_mutex_unlock(&event_lock);
 
 int fdevent_config(server *srv) {
 	static const struct ev_map { fdevent_handler_t et; const char *name; } event_handlers[] =
@@ -96,7 +115,8 @@ int fdevent_config(server *srv) {
 		 *
 		 * as it is a hard limit and will lead to a segfault we add some safety
 		 * */
-		srv->max_fds = FD_SETSIZE - 200;
+		//srv->max_fds = FD_SETSIZE - 200;
+		srv->max_fds = 4096;
 	}
 	else
       #endif
@@ -148,6 +168,13 @@ const char * fdevent_show_event_handlers(void) {
       ;
 }
 
+static inline void fdevent_unregister_self(fdevents *ev, int fd) {
+	fdnode *fdn = ev->fdarray[fd];
+	if ((uintptr_t)fdn & 0x3) return; /*(should not happen)*/
+	fdnode_free(fdn);
+	ev->fdarray[fd] = NULL;
+}
+
 fdevents *fdevent_init(server *srv) {
 	fdevents *ev;
 	int type = srv->event_handler;
@@ -193,54 +220,55 @@ fdevents *fdevent_init(server *srv) {
 				"event-handler poll failed");
 			goto error;
 		}
-		return ev;
+		break;
 	case FDEVENT_HANDLER_SELECT:
 		if (0 != fdevent_select_init(ev)) {
 			log_error_write(srv, __FILE__, __LINE__, "S",
 				"event-handler select failed");
 			goto error;
 		}
-		return ev;
+		break;
 	case FDEVENT_HANDLER_LINUX_SYSEPOLL:
 		if (0 != fdevent_linux_sysepoll_init(ev)) {
 			log_error_write(srv, __FILE__, __LINE__, "S",
 				"event-handler linux-sysepoll failed, try to set server.event-handler = \"poll\" or \"select\"");
 			goto error;
 		}
-		return ev;
+		break;
 	case FDEVENT_HANDLER_SOLARIS_DEVPOLL:
 		if (0 != fdevent_solaris_devpoll_init(ev)) {
 			log_error_write(srv, __FILE__, __LINE__, "S",
 				"event-handler solaris-devpoll failed, try to set server.event-handler = \"poll\" or \"select\"");
 			goto error;
 		}
-		return ev;
+		break;
 	case FDEVENT_HANDLER_SOLARIS_PORT:
 		if (0 != fdevent_solaris_port_init(ev)) {
 			log_error_write(srv, __FILE__, __LINE__, "S",
 				"event-handler solaris-eventports failed, try to set server.event-handler = \"poll\" or \"select\"");
 			goto error;
 		}
-		return ev;
+		break;
 	case FDEVENT_HANDLER_FREEBSD_KQUEUE:
 		if (0 != fdevent_freebsd_kqueue_init(ev)) {
 			log_error_write(srv, __FILE__, __LINE__, "S",
 				"event-handler freebsd-kqueue failed, try to set server.event-handler = \"poll\" or \"select\"");
 			goto error;
 		}
-		return ev;
+		break;
 	case FDEVENT_HANDLER_LIBEV:
 		if (0 != fdevent_libev_init(ev)) {
 			log_error_write(srv, __FILE__, __LINE__, "S",
 				"event-handler libev failed, try to set server.event-handler = \"poll\" or \"select\"");
 			goto error;
 		}
-		return ev;
+		break;
 	case FDEVENT_HANDLER_UNSET:
 	default:
-		break;
+		goto error;
 	}
 
+	return ev;
 error:
 	free(ev->fdarray);
 	free(ev);
@@ -251,10 +279,12 @@ error:
 }
 
 void fdevent_free(fdevents *ev) {
+
 	size_t i;
 	if (!ev) return;
 
-	if (ev->free) ev->free(ev);
+	
+	if (fdevent_get()->free) fdevent_get()->free(ev);
 
 	for (i = 0; i < ev->maxfds; i++) {
 		/* (fdevent_sched_run() should already have been run,
@@ -267,8 +297,9 @@ void fdevent_free(fdevents *ev) {
 	free(ev);
 }
 
+//network->server, so don't need to lock
 int fdevent_reset(fdevents *ev) {
-	if (ev->reset) return ev->reset(ev);
+	if (fdevent_get()->reset) return fdevent_get()->reset(ev);
 
 	return 0;
 }
@@ -296,36 +327,38 @@ int fdevent_register(fdevents *ev, int fd, fdevent_handler handler, void *ctx) {
 	fdn->handler_ctx = NULL;
 	fdn->events  = 0;
 
-	ev->fdarray[fd] = fdn;
+EVE_LOCK
+	ev->fdarray[fdn->fd] = fdn;
+EVE_UNLOCK
 
 	return 0;
 }
 
 int fdevent_unregister(fdevents *ev, int fd) {
-	fdnode *fdn;
-
 	if (!ev) return 0;
-	fdn = ev->fdarray[fd];
-	if ((uintptr_t)fdn & 0x3) return 0; /*(should not happen)*/
 
-	fdnode_free(fdn);
-
-	ev->fdarray[fd] = NULL;
-
+EVE_LOCK
+	fdevent_unregister_self(ev, fd);
+EVE_UNLOCK
 	return 0;
 }
 
 void fdevent_sched_close(fdevents *ev, int fd, int issock) {
 	fdnode *fdn;
 	if (!ev) return;
+EVE_LOCK
+
 	fdn = ev->fdarray[fd];
-	if ((uintptr_t)fdn & 0x3) return;
+	if ((uintptr_t)fdn & 0x3) goto end;
 	ev->fdarray[fd] = (fdnode *)((uintptr_t)fdn | (issock ? 0x1 : 0x2));
 	fdn->ctx = ev->pendclose;
 	ev->pendclose = fdn;
+end:
+EVE_UNLOCK
 }
 
 void fdevent_sched_run(server *srv, fdevents *ev) {
+EVE_LOCK
 	for (fdnode *fdn = ev->pendclose; fdn; ) {
 		int fd, rc;
 		fdnode *fdn_tmp;
@@ -349,7 +382,7 @@ void fdevent_sched_run(server *srv, fdevents *ev) {
 			log_error_write(srv, __FILE__, __LINE__, "sds", "close failed ", fd, strerror(errno));
 		}
 		else {
-			--srv->cur_fds;
+			server_decrement_cur_fds();
 		}
 
 		fdn_tmp = fdn;
@@ -359,76 +392,128 @@ void fdevent_sched_run(server *srv, fdevents *ev) {
 		ev->fdarray[fd] = NULL;
 	}
 	ev->pendclose = NULL;
+EVE_UNLOCK
 }
 
 int fdevent_event_get_interest(const fdevents *ev, int fd) {
-	return fd >= 0 ? ev->fdarray[fd]->events : 0;
+	int ret = 0;
+EVE_LOCK
+	ret = fd >= 0 ? ev->fdarray[fd]->events : 0;
+EVE_UNLOCK
+	return ret;
+}
+
+static void fdevent_event_del_self(fdevents *ev, int *fde_ndx, int fd) {
+	if ((uintptr_t)ev->fdarray[fd] & 0x3) return;
+
+	if (fdevent_get()->event_del) *fde_ndx = fdevent_get()->event_del(ev, *fde_ndx, fd);
+	ev->fdarray[fd]->events = 0;
 }
 
 void fdevent_event_del(fdevents *ev, int *fde_ndx, int fd) {
 	if (-1 == fd) return;
-	if ((uintptr_t)ev->fdarray[fd] & 0x3) return;
+EVE_LOCK
+	fdevent_event_del_self(ev, fde_ndx, fd);
+EVE_UNLOCK
+}
 
-	if (ev->event_del) *fde_ndx = ev->event_del(ev, *fde_ndx, fd);
-	ev->fdarray[fd]->events = 0;
+static inline void fdevent_event_set_self(fdevents *ev, int *fde_ndx, int fd, int events) {
+	/*(Note: skips registering with kernel if initial events is 0,
+         * so caller should pass non-zero events for initial registration.
+         * If never registered due to never being called with non-zero events,
+         * then FDEVENT_HUP or FDEVENT_ERR will never be returned.) */
+
+	if (ev->fdarray[fd] == NULL || ev->fdarray[fd]->events == events) return;/*(no change; nothing to do)*/
+
+	if (fdevent_get()->event_set) *fde_ndx = fdevent_get()->event_set(ev, *fde_ndx, fd, events);
+	ev->fdarray[fd]->events = events;
 }
 
 void fdevent_event_set(fdevents *ev, int *fde_ndx, int fd, int events) {
 	if (-1 == fd) return;
 
-	/*(Note: skips registering with kernel if initial events is 0,
-         * so caller should pass non-zero events for initial registration.
-         * If never registered due to never being called with non-zero events,
-         * then FDEVENT_HUP or FDEVENT_ERR will never be returned.) */
-	if (ev->fdarray[fd]->events == events) return;/*(no change; nothing to do)*/
-
-	if (ev->event_set) *fde_ndx = ev->event_set(ev, *fde_ndx, fd, events);
-	ev->fdarray[fd]->events = events;
+EVE_LOCK
+	fdevent_event_set_self(ev, fde_ndx, fd, events);
+EVE_UNLOCK
 }
 
-void fdevent_event_add(fdevents *ev, int *fde_ndx, int fd, int event) {
+static void fdevent_event_add_self(fdevents *ev, int *fde_ndx, int fd, int event) {
 	int events;
-	if (-1 == fd) return;
-
 	events = ev->fdarray[fd]->events;
 	if ((events & event) == event) return; /*(no change; nothing to do)*/
 
 	events |= event;
-	if (ev->event_set) *fde_ndx = ev->event_set(ev, *fde_ndx, fd, events);
+	if (fdevent_get()->event_set) *fde_ndx = fdevent_get()->event_set(ev, *fde_ndx, fd, events);
+	ev->fdarray[fd]->events = events;
+}
+
+void fdevent_event_add(fdevents *ev, int *fde_ndx, int fd, int event) {
+	if (-1 == fd) return;
+EVE_LOCK
+	fdevent_event_add_self(ev, fde_ndx, fd, event);
+EVE_UNLOCK
+}
+
+static void fdevent_event_clr_self(fdevents *ev, int *fde_ndx, int fd, int event) {
+	int events = ev->fdarray[fd]->events;
+	if (!(events & event)) return; /*(no change; nothing to do)*/
+
+	events &= ~event;
+	if (fdevent_get()->event_set) *fde_ndx = fdevent_get()->event_set(ev, *fde_ndx, fd, events);
 	ev->fdarray[fd]->events = events;
 }
 
 void fdevent_event_clr(fdevents *ev, int *fde_ndx, int fd, int event) {
-	int events;
 	if (-1 == fd) return;
 
-	events = ev->fdarray[fd]->events;
-	if (!(events & event)) return; /*(no change; nothing to do)*/
-
-	events &= ~event;
-	if (ev->event_set) *fde_ndx = ev->event_set(ev, *fde_ndx, fd, events);
-	ev->fdarray[fd]->events = events;
+EVE_LOCK
+	fdevent_event_clr_self(ev, fde_ndx, fd, event);
+EVE_UNLOCK
 }
 
 int fdevent_poll(fdevents *ev, int timeout_ms) {
-	if (ev->poll == NULL) SEGFAULT();
-	return ev->poll(ev, timeout_ms);
+	if (fdevent_get()->poll == NULL) SEGFAULT();
+	return fdevent_get()->poll(ev, timeout_ms);
 }
 
-int fdevent_event_get_revent(fdevents *ev, size_t ndx) {
-	if (ev->event_get_revent == NULL) SEGFAULT();
+int fdevent_call(struct server *srv) {
+        int ret = -1;
+EVE_LOCK
+	fdevent_handler handler=NULL;
+	void *context=NULL;
 
-	return ev->event_get_revent(ev, ndx);
+	int fd_ndx  = -1, revents=0, fd=0;
+	fd_ndx = fdevent_event_next_fdndx (srv->ev, fd_ndx);
+	if (-1 == fd_ndx) goto end; /* not all fdevent handlers know how many fds got an event */
+        ret = 0;
+	revents = fdevent_event_get_revent (srv->ev, fd_ndx);
+	fd      = fdevent_event_get_fd     (srv->ev, fd_ndx);
+	handler = fdevent_get_handler(srv->ev, fd);
+	if(NULL == handler) goto end;
+	context = fdevent_get_context(srv->ev, fd);
+//to care call register API in handler
+end:
+EVE_UNLOCK
+	if (NULL != handler) {
+		(*handler)(srv, context, revents);
+	}
+	return ret;
 }
 
-int fdevent_event_get_fd(fdevents *ev, size_t ndx) {
-	if (ev->event_get_fd == NULL) SEGFAULT();
+static int fdevent_event_get_revent(fdevents *ev, size_t ndx) {
+	if (fdevent_get()->event_get_revent == NULL) SEGFAULT();
 
-	return ev->event_get_fd(ev, ndx);
+	return fdevent_get()->event_get_revent(ev, ndx);
+}
+
+static int fdevent_event_get_fd(fdevents *ev, size_t ndx) {
+	if (fdevent_get()->event_get_fd == NULL) SEGFAULT();
+
+	return fdevent_get()->event_get_fd(ev, ndx);
 }
 
 fdevent_handler fdevent_get_handler(fdevents *ev, int fd) {
-	if (ev->fdarray[fd] == NULL) SEGFAULT();
+	//there is a case to unregister fdarray
 	if ((uintptr_t)ev->fdarray[fd] & 0x3) return NULL;
 	if (ev->fdarray[fd]->fd != fd) SEGFAULT();
 
@@ -578,8 +663,8 @@ int fdevent_accept_listenfd(int listenfd, struct sockaddr *addr, size_t *addrlen
 }
 
 
-int fdevent_event_next_fdndx(fdevents *ev, int ndx) {
-	if (ev->event_next_fdndx) return ev->event_next_fdndx(ev, ndx);
+static int fdevent_event_next_fdndx(fdevents *ev, int ndx) {
+	if (fdevent_get()->event_next_fdndx) return fdevent_get()->event_next_fdndx(ev, ndx);
 
 	return -1;
 }
@@ -711,6 +796,10 @@ typedef struct fdevent_cmd_pipes {
 
 static fdevent_cmd_pipes cmd_pipes;
 
+//if use function only server, don't need to lock
+static pthread_mutex_t cmd_pipe_lock=PTHREAD_MUTEX_INITIALIZER;
+#define CMDPILE_LOCK pthread_mutex_lock(&cmd_pipe_lock);
+#define CMDPILE_UNLOCK pthread_mutex_unlock(&cmd_pipe_lock);
 
 static pid_t fdevent_open_logger_pipe_spawn(const char *logger, int rfd) {
     char *args[4];
@@ -751,35 +840,45 @@ static void fdevent_restart_logger_pipe(fdevent_cmd_pipe *fcp, time_t ts) {
 
 
 void fdevent_restart_logger_pipes(time_t ts) {
+CMDPILE_LOCK
     for (size_t i = 0; i < cmd_pipes.used; ++i) {
         fdevent_cmd_pipe * const fcp = cmd_pipes.ptr+i;
         if (fcp->pid > 0) continue;
         fdevent_restart_logger_pipe(fcp, ts);
     }
+CMDPILE_UNLOCK
 }
 
 
 int fdevent_waitpid_logger_pipe_pid(pid_t pid, time_t ts) {
+    int ret = 0;
+CMDPILE_LOCK
     for (size_t i = 0; i < cmd_pipes.used; ++i) {
         fdevent_cmd_pipe * const fcp = cmd_pipes.ptr+i;
         if (pid != fcp->pid) continue;
         fcp->pid = -1;
         fdevent_restart_logger_pipe(fcp, ts);
-        return 1;
+        ret = 1;
+        break;
     }
-    return 0;
+CMDPILE_UNLOCK
+    return ret;
 }
 
 
 void fdevent_clr_logger_pipe_pids(void) {
+CMDPILE_LOCK
     for (size_t i = 0; i < cmd_pipes.used; ++i) {
         fdevent_cmd_pipe *fcp = cmd_pipes.ptr+i;
         fcp->pid = -1;
     }
+CMDPILE_UNLOCK
 }
 
 
 int fdevent_reaped_logger_pipe(pid_t pid) {
+    int ret=0;
+CMDPILE_LOCK
     for (size_t i = 0; i < cmd_pipes.used; ++i) {
         fdevent_cmd_pipe *fcp = cmd_pipes.ptr+i;
         if (fcp->pid == pid) {
@@ -787,19 +886,23 @@ int fdevent_reaped_logger_pipe(pid_t pid) {
             if (fcp->start + 5 < ts) { /* limit restart to once every 5 sec */
                 fcp->start = ts;
                 fcp->pid = fdevent_open_logger_pipe_spawn(fcp->cmd,fcp->fds[0]);
-                return 1;
+                ret = 1;
+                break;
             }
             else {
                 fcp->pid = -1;
-                return -1;
+                ret = -1;
+                break;
             }
         }
     }
-    return 0;
+CMDPILE_UNLOCK
+    return ret;
 }
 
 
 void fdevent_close_logger_pipes(void) {
+CMDPILE_LOCK
     for (size_t i = 0; i < cmd_pipes.used; ++i) {
         fdevent_cmd_pipe *fcp = cmd_pipes.ptr+i;
         close(fcp->fds[0]);
@@ -809,20 +912,24 @@ void fdevent_close_logger_pipes(void) {
     cmd_pipes.ptr = NULL;
     cmd_pipes.used = 0;
     cmd_pipes.size = 0;
+CMDPILE_UNLOCK
 }
 
 
 void fdevent_breakagelog_logger_pipe(int fd) {
+CMDPILE_LOCK
     for (size_t i = 0; i < cmd_pipes.used; ++i) {
         fdevent_cmd_pipe *fcp = cmd_pipes.ptr+i;
         if (fcp->fds[1] != fd) continue;
         fcp->fds[1] = STDERR_FILENO;
         break;
     }
+CMDPILE_UNLOCK
 }
 
 
 static void fdevent_init_logger_pipe(const char *cmd, int fds[2], pid_t pid) {
+CMDPILE_LOCK
     fdevent_cmd_pipe *fcp;
     if (cmd_pipes.used == cmd_pipes.size) {
         cmd_pipes.size += 4;
@@ -836,6 +943,7 @@ static void fdevent_init_logger_pipe(const char *cmd, int fds[2], pid_t pid) {
     fcp->fds[1] = fds[1];
     fcp->pid = pid;
     fcp->start = time(NULL);
+CMDPILE_UNLOCK
 }
 
 
@@ -989,4 +1097,14 @@ int fdevent_set_tcp_nodelay (const int fd, const int opt)
 int fdevent_set_so_reuseaddr (const int fd, const int opt)
 {
     return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+}
+
+static fdevent_callback_t callback_g ={0};
+
+FDEventCallbask fdevent_get(void) {
+	return &callback_g;
+}
+
+void fdevent_set(FDEventCallbask callback) {
+	memcpy(&callback_g, callback, sizeof(callback_g));
 }

@@ -25,6 +25,12 @@
 #include "keyvalue.h"
 #include "sock_addr.h"
 #include "etag.h"
+#include <state_machine.h>
+#include <event_threadpool.h>
+#include <memorypool.h>
+#include <pthread.h>
+#include <dp_debug.h>
+#include <sys/eventfd.h>
 
 struct fdevents;        /* declaration */
 struct stat_cache;      /* declaration */
@@ -288,6 +294,11 @@ typedef enum {
 	CON_STATE_CLOSE
 } connection_state_t;
 
+//event for connection state machine
+typedef enum {
+	CON_EVENT_RUN,
+} connection_event_t;
+
 typedef enum {
 	/* condition not active at the moment because itself or some
 	 * pre-condition depends on data not available yet
@@ -313,6 +324,9 @@ typedef struct cond_cache_t {
 	int matches[3 * 10];
 	buffer *comp_value; /* just a pointer */
 } cond_cache_t;
+
+struct connection_event_handler_t;
+typedef struct connection_event_handler_t connection_event_handler_t, *ConEventHandler;
 
 struct connection {
 	connection_state_t state;
@@ -387,6 +401,11 @@ struct connection {
 	buffer *server_name;
 	buffer *proto;
 
+	/* tmp buffers */
+	buffer *tmp_buf;
+	buffer *tmp_chunk_len;
+	array *split_vals;
+
 	/* error-handler */
 	int error_handler_saved_status;
 	http_method_t error_handler_saved_method;
@@ -399,6 +418,11 @@ struct connection {
 	etag_flags_t etag_flags;
 
 	int conditional_is_valid[COMP_LAST_ELEMENT]; 
+	StateMachineInfo state_machine;
+
+	/*connection event handler pool*/
+	MemoryPool event_pool;
+	ConEventHandler client_handler;
 };
 
 typedef struct {
@@ -413,11 +437,6 @@ typedef struct {
 	time_t mtime;
 	int http_status;
 } realpath_cache_type;
-
-typedef struct {
-	time_t  mtime;  /* the key */
-	buffer *str;    /* a buffer for the string represenation */
-} mtime_cache_type;
 
 typedef struct {
 	void  *ptr;
@@ -502,44 +521,19 @@ struct server {
 	buffer_plugin plugins;
 	void *plugin_slots;
 
-	/* counters */
-	int con_opened;
-	int con_read;
-	int con_written;
-	int con_closed;
-
 	int max_fds;    /* max possible fds */
-	int cur_fds;    /* currently used fds */
 	int want_fds;   /* waiting fds */
 	int sockets_disabled;
 
 	size_t max_conns;
 
 	/* buffers */
-	buffer *parse_full_path;
-	buffer *response_header;
-	buffer *response_range;
-	buffer *tmp_buf;
-
-	buffer *tmp_chunk_len;
-
 	buffer *empty_string; /* is necessary for cond_match */
 
 	buffer *cond_check_buf;
 
-	/* caches */
-	mtime_cache_type mtime_cache[FILE_CACHE_MAX];
-
-	array *split_vals;
-
 	/* Timestamps */
-	time_t cur_ts;
-	time_t last_generated_date_ts;
-	time_t last_generated_debug_ts;
 	time_t startup_ts;
-
-	buffer *ts_debug_str;
-	buffer *ts_date_str;
 
 	/* config-file */
 	array *config_touched;
@@ -552,9 +546,15 @@ struct server {
 	short int config_deprecated;
 	short int config_unsupported;
 
-	connections *conns;
 	connections *joblist;
 	connections *fdwaitqueue;
+
+	/* event pool for con */
+	EventTPoolManager threadpool;
+
+	/* pool data for con */
+	MemoryPool connspool;
+	size_t conns_used;
 
 	struct stat_cache *stat_cache;
 
@@ -581,7 +581,17 @@ struct server {
 	uid_t uid;
 	gid_t gid;
 	pid_t pid;
+	pthread_t tid;
+	DPTimeLog handle;
 };
 
+#include <pthread.h>
+#define ENTERLOG(srv) dp_timelog_print(srv->handle, "[%s(%s:%d)thread:%x]\n", __FUNCTION__,__FILE__,__LINE__,(unsigned int)pthread_self());
+
+typedef struct http_connection_t {
+	server * srv;
+	connection *con;
+	int ostate;
+} http_connection_t;
 
 #endif

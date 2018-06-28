@@ -182,9 +182,9 @@ PHYSICALPATH_FUNC(mod_alias_physical_handler) {
 			/* matched */
 
 			buffer_copy_buffer(con->physical.basedir, ds->value);
-			buffer_copy_buffer(srv->tmp_buf, ds->value);
-			buffer_append_string(srv->tmp_buf, uri_ptr + alias_len);
-			buffer_copy_buffer(con->physical.path, srv->tmp_buf);
+			buffer_copy_buffer(con->tmp_buf, ds->value);
+			buffer_append_string(con->tmp_buf, uri_ptr + alias_len);
+			buffer_copy_buffer(con->physical.path, con->tmp_buf);
 
 			return HANDLER_GO_ON;
 		}

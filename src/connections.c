@@ -17,6 +17,7 @@
 #include "plugin.h"
 
 #include "inet_ntop_cache.h"
+#include "state_machine.h"
 
 #include <sys/stat.h>
 
@@ -24,6 +25,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <stdio.h>
 
 #ifdef HAVE_SYS_FILIO_H
 # include <sys/filio.h>
@@ -35,46 +37,158 @@ typedef struct {
 	        PLUGIN_DATA;
 } plugin_data;
 
+typedef struct connection_request_ctx_t {
+	server *srv;
+	connection * con;
+	void *arg;
+	con_fdevent_handler handler;
+} connection_request_ctx_t;
+
+/*event handler regi*/
+struct connection_event_handler_t {
+	/*to add event*/
+	EventSubscriber subscriber;
+	connection_request_ctx_t ctx;
+	EventTPoolThreadInfo eventdata;
+//	EventTPoolFDData eventdata;
+};
+
+static inline int connection_tpoolevent2fdevent(int eventflag) {
+	int ret_eveflag=0;
+	if(eventflag&EV_TPOOL_READ) ret_eveflag |= FDEVENT_IN;
+	if(eventflag&EV_TPOOL_WRITE) ret_eveflag |= FDEVENT_OUT;
+	return ret_eveflag;
+}
+
+static inline int connection_fdevent2tpoolevent(int eventflag) {
+	int ret_eveflag=0;
+	if(eventflag&FDEVENT_IN) ret_eveflag |= EV_TPOOL_READ;
+	if(eventflag&FDEVENT_OUT) ret_eveflag |= EV_TPOOL_WRITE;
+	return ret_eveflag;
+}
+
+#define CON_MAX_EVENTFD (16)
+#define CON_EVENTFD_SIZE (sizeof(connection_event_handler_t)+ sizeof(event_subscriber_t))
+static int connection_handle_close_state(server *srv, connection *con);
+static int connection_handle_response_end_state(server *srv, connection *con);
+static int connection_handle_request_start_state(server *srv, connection *con);
+static int connection_handle_request_end_state(server *srv, connection *con);
+static int connection_handle_handle_request_state(server *srv, connection *con);
+static int connection_handle_response_start_state(server *srv, connection *con);
+static int connection_handle_connect_state(server *srv, connection *con);
+static int connection_handle_write_state(server *srv, connection *con);
+static int connection_handle_read_state(server *srv, connection *con);
+static void connection_handle_fdevent_set(connection *con);
+static void connection_state_machine_init(server *srv, connection *con);
+static void connection_state_machine_exit(server *srv, connection *con);
+static int connection_del(server *srv, connection *con);
+static void connection_handle_fdevent_cb(int socketfd, short eventflag, void * event_arg);
+
+static void connection_event_init(void * handle);
+static void connection_init(server *srv, connection *con);
+static int connection_reset(server *srv, connection *con);
+static inline int connection_is_init(connection *con);
+static void connection_pool_connection_init(server *srv, unsigned short size);
+
+static inline int connection_get_ostate(connection *con) {
+	return (con->state==CON_STATE_READ_POST)?CON_STATE_HANDLE_REQUEST:con->state;
+}
+
+static int connection_handle_base(int (*handle)(server *srv, connection *con), void * arg) {
+	http_connection_t * http_con = (http_connection_t *)arg;
+	if (http_con->srv->srvconf.log_state_handling) {
+		log_error_write(http_con->srv, __FILE__, __LINE__, "sds",
+				"state at start",
+				http_con->con->fd,
+				connection_get_state(http_con->con->state));
+	}
+
+	//fprintf(stderr, "thread:%x, %s state %s\n", (unsigned int)pthread_self(), __func__, connection_get_state(http_con->con->state));
+	if( handle(http_con->srv, http_con->con) == -1 || http_con->ostate != (int)http_con->con->state ) {
+		http_con->ostate = http_con->con->state;
+		return state_machine_call_event(http_con->con->state_machine, CON_EVENT_RUN, arg, 0, NULL);
+	}
+
+	if (http_con->srv->srvconf.log_state_handling) {
+		log_error_write(http_con->srv, __FILE__, __LINE__, "sds",
+				"state at exit:",
+				http_con->con->fd,
+				connection_get_state(http_con->con->state));
+	}
+
+	connection_handle_fdevent_set(http_con->con);
+	return 0;
+}
+
+static int connection_request_start_state(void *arg) {
+	return connection_handle_base(connection_handle_request_start_state, arg);
+}
+static int connection_request_end_state(void *arg) {
+	return connection_handle_base(connection_handle_request_end_state, arg);
+}
+static int connection_handle_request_state(void *arg) {
+	return connection_handle_base(connection_handle_handle_request_state, arg);
+}
+static int connection_response_start_state(void *arg) {
+	return connection_handle_base(connection_handle_response_start_state, arg);
+}
+static int connection_response_end_state(void *arg) {
+	return connection_handle_base(connection_handle_response_end_state, arg);
+}
+static int connection_connect_state(void *arg) {
+	return connection_handle_base(connection_handle_connect_state, arg);
+}
+static int connection_close_state(void *arg) {
+	return connection_handle_base(connection_handle_close_state, arg);
+}
+static int connection_read_state(void *arg) {
+	return connection_handle_base(connection_handle_read_state, arg);
+}
+static int connection_write_state(void *arg) {
+	return connection_handle_base(connection_handle_write_state, arg);
+}
+
+#undef STATE_METHOD_DEFINE
+
+static state_info_t state_info[] = {
+	STATE_MNG_SET_INFO_INIT( CON_STATE_REQUEST_START,  connection_request_start_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_REQUEST_END,    connection_request_end_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_READ_POST,      connection_handle_request_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_HANDLE_REQUEST, connection_handle_request_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_RESPONSE_START, connection_response_start_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_RESPONSE_END,   connection_response_end_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_ERROR,          connection_response_end_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_CONNECT,        connection_connect_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_CLOSE,          connection_close_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_READ,           connection_read_state),
+	STATE_MNG_SET_INFO_INIT( CON_STATE_WRITE,          connection_write_state),
+};
+
+//Is it OK to use same state info table?
+static const state_event_info_t state_event[] = {
+	{CON_EVENT_RUN, sizeof(state_info)/sizeof(state_info[0]), state_info},
+};
+
 static connection *connections_get_new_connection(server *srv) {
-	connections *conns = srv->conns;
-	size_t i;
+//	if(!srv->connspool) connection_pool_init(srv);
 
-	if (conns->size == 0) {
-		conns->size = srv->max_conns >= 128 ? 128 : srv->max_conns > 16 ? 16 : srv->max_conns;
-		conns->ptr = NULL;
-		conns->ptr = malloc(sizeof(*conns->ptr) * conns->size);
-		force_assert(NULL != conns->ptr);
-		for (i = 0; i < conns->size; i++) {
-			conns->ptr[i] = connection_init(srv);
-		}
-	} else if (conns->size == conns->used) {
-		conns->size += srv->max_conns >= 128 ? 128 : 16;
-		conns->ptr = realloc(conns->ptr, sizeof(*conns->ptr) * conns->size);
-		force_assert(NULL != conns->ptr);
+	connection * con = mpool_get(srv->connspool);
+	force_assert(con != NULL);
 
-		for (i = conns->used; i < conns->size; i++) {
-			conns->ptr[i] = connection_init(srv);
-		}
+	if(!connection_is_init(con)) {
+		connection_init(srv, con);
+		
+		connection_pool_connection_init(srv, srv->max_conns - srv->conns_used - 1 >= 128 ? 128 : srv->max_conns - srv->conns_used - 1 > 16 ? 16 : srv->max_conns - srv->conns_used - 1);
 	}
 
-	connection_reset(srv, conns->ptr[conns->used]);
-#if 0
-	fprintf(stderr, "%s.%d: add: ", __FILE__, __LINE__);
-	for (i = 0; i < conns->used + 1; i++) {
-		fprintf(stderr, "%d ", conns->ptr[i]->fd);
-	}
-	fprintf(stderr, "\n");
-#endif
+	connection_reset(srv, con);
 
-	conns->ptr[conns->used]->ndx = conns->used;
-	return conns->ptr[conns->used++];
+	con->ndx = srv->conns_used++;
+	return con;
 }
 
 static int connection_del(server *srv, connection *con) {
-	size_t i;
-	connections *conns = srv->conns;
-	connection *temp;
-
+//	fprintf(stderr, "%s\n", __func__);
 	if (con == NULL) return -1;
 
 	if (-1 == con->ndx) return -1;
@@ -84,39 +198,23 @@ static int connection_del(server *srv, connection *con) {
 	buffer_reset(con->uri.query);
 	buffer_reset(con->request.orig_uri);
 
-	i = con->ndx;
-
 	/* not last element */
-
-	if (i != conns->used - 1) {
-		temp = conns->ptr[i];
-		conns->ptr[i] = conns->ptr[conns->used - 1];
-		conns->ptr[conns->used - 1] = temp;
-
-		conns->ptr[i]->ndx = i;
-		conns->ptr[conns->used - 1]->ndx = -1;
-	}
-
-	conns->used--;
+	mpool_release(srv->connspool, con);
+	srv->conns_used--;
 
 	con->ndx = -1;
-#if 0
-	fprintf(stderr, "%s.%d: del: (%d)", __FILE__, __LINE__, conns->used);
-	for (i = 0; i < conns->used; i++) {
-		fprintf(stderr, "%d ", conns->ptr[i]->fd);
-	}
-	fprintf(stderr, "\n");
-#endif
 	return 0;
 }
 
 static int connection_close(server *srv, connection *con) {
-	if (con->fd < 0) con->fd = -con->fd;
+	int fd = con->fd;
+	if (con->fd < 0)con->fd = -con->fd;
+//	fprintf(stderr, "[%x]%s\n",(unsigned int )pthread_self(),  __func__);
 
 	plugins_call_handle_connection_close(srv, con);
 
-	fdevent_event_del(srv->ev, &(con->fde_ndx), con->fd);
-	fdevent_unregister(srv->ev, con->fd);
+	if(0 < fd) {
+	connection_fdevent_event_del(con->client_handler);
 #ifdef __WIN32
 	if (closesocket(con->fd)) {
 		log_error_write(srv, __FILE__, __LINE__, "sds",
@@ -129,12 +227,14 @@ static int connection_close(server *srv, connection *con) {
 	}
 #endif
 	else {
-		srv->cur_fds--;
+		server_decrement_cur_fds();
 	}
+//	fprintf(stderr, "[%x]%s closed\n",(unsigned int )pthread_self(),  __func__);
 
 	if (srv->srvconf.log_state_handling) {
 		log_error_write(srv, __FILE__, __LINE__, "sd",
 				"connection closed for fd", con->fd);
+	}
 	}
 	con->fd = -1;
 
@@ -150,7 +250,7 @@ static int connection_close(server *srv, connection *con) {
 
 	connection_del(srv, con);
 	connection_set_state(srv, con, CON_STATE_CONNECT);
-
+	//add joblist to run state_machine
 	return 0;
 }
 
@@ -160,6 +260,7 @@ static void connection_read_for_eos(server *srv, connection *con) {
 	 * still have unread data, and closing before reading
 	 * it will make the client not see all our output.
 	 */
+	UNUSED(srv);
 	ssize_t len;
 	const int type = con->dst_addr.plain.sa_family;
 	char buf[16384];
@@ -174,26 +275,27 @@ static void connection_read_for_eos(server *srv, connection *con) {
       #endif
 
 	/* 0 == len || (len < 0 && (errno is a non-recoverable error)) */
-		con->close_timeout_ts = srv->cur_ts - (HTTP_LINGER_TIMEOUT+1);
+		con->close_timeout_ts = server_get_cur_ts() - (HTTP_LINGER_TIMEOUT+1);
 }
 
-static void connection_handle_close_state(server *srv, connection *con) {
+static int connection_handle_close_state(server *srv, connection *con) {
 	connection_read_for_eos(srv, con);
 
-	if (srv->cur_ts - con->close_timeout_ts > HTTP_LINGER_TIMEOUT) {
+	if (server_get_cur_ts() - con->close_timeout_ts > HTTP_LINGER_TIMEOUT) {
 		connection_close(srv, con);
 	}
+	return 0;
 }
 
 static void connection_handle_shutdown(server *srv, connection *con) {
+//	fprintf(stderr, "%s shutdown\n", __func__);
 	plugins_call_handle_connection_shut_wr(srv, con);
 
-	srv->con_closed++;
 	connection_reset(srv, con);
 
 	/* close the connection */
 	if (con->fd >= 0 && 0 == shutdown(con->fd, SHUT_WR)) {
-		con->close_timeout_ts = srv->cur_ts;
+		con->close_timeout_ts = server_get_cur_ts();
 		connection_set_state(srv, con, CON_STATE_CLOSE);
 
 		if (srv->srvconf.log_state_handling) {
@@ -205,14 +307,12 @@ static void connection_handle_shutdown(server *srv, connection *con) {
 	}
 }
 
-static void connection_handle_response_end_state(server *srv, connection *con) {
+static int connection_handle_response_end_state(server *srv, connection *con) {
         /* log the request */
         /* (even if error, connection dropped, still write to access log if http_status) */
 	if (con->http_status) {
 		plugins_call_handle_request_done(srv, con);
 	}
-
-	if (con->state != CON_STATE_ERROR) srv->con_written++;
 
 	if (con->request.content_length != con->request_content_queue->bytes_in
 	    || con->state == CON_STATE_ERROR) {
@@ -223,13 +323,14 @@ static void connection_handle_response_end_state(server *srv, connection *con) {
         if (con->keep_alive) {
 		connection_reset(srv, con);
 #if 0
-		con->request_start = srv->cur_ts;
-		con->read_idle_ts = srv->cur_ts;
+		con->request_start = server_get_cur_ts();
+		con->read_idle_ts = con->request_start;
 #endif
 		connection_set_state(srv, con, CON_STATE_REQUEST_START);
 	} else {
 		connection_handle_shutdown(srv, con);
 	}
+	return 0;
 }
 
 static void connection_handle_errdoc_init(server *srv, connection *con) {
@@ -410,9 +511,9 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 				/* qlen = 0 is important for Redirects (301, ...) as they MAY have
 				 * a content. Browsers are waiting for a Content otherwise
 				 */
-				buffer_copy_int(srv->tmp_buf, qlen);
+				buffer_copy_int(con->tmp_buf, qlen);
 
-				response_header_overwrite(srv, con, CONST_STR_LEN("Content-Length"), CONST_BUF_LEN(srv->tmp_buf));
+				response_header_overwrite(srv, con, CONST_STR_LEN("Content-Length"), CONST_BUF_LEN(con->tmp_buf));
 			}
 		}
 	} else {
@@ -434,7 +535,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 				con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
 				if (qlen) {
 					/* create initial Transfer-Encoding: chunked segment */
-					buffer *b = srv->tmp_chunk_len;
+					buffer *b = con->tmp_chunk_len;
 					buffer_string_set_length(b, 0);
 					buffer_append_uint_hex(b, (uintmax_t)qlen);
 					buffer_append_string_len(b, CONST_STR_LEN("\r\n"));
@@ -489,7 +590,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 static int connection_handle_write(server *srv, connection *con) {
 	switch(connection_write_chunkqueue(srv, con, con->write_queue, MAX_WRITE_LIMIT)) {
 	case 0:
-		con->write_request_ts = srv->cur_ts;
+		con->write_request_ts = server_get_cur_ts();
 		if (con->file_finished) {
 			connection_set_state(srv, con, CON_STATE_RESPONSE_END);
 		}
@@ -503,7 +604,7 @@ static int connection_handle_write(server *srv, connection *con) {
 		connection_set_state(srv, con, CON_STATE_ERROR);
 		break;
 	case 1:
-		con->write_request_ts = srv->cur_ts;
+		con->write_request_ts = server_get_cur_ts();
 		con->is_writable = 0;
 
 		/* not finished yet -> WRITE */
@@ -513,16 +614,15 @@ static int connection_handle_write(server *srv, connection *con) {
 	return 0;
 }
 
+static void connection_event_init(void *handle) {
+	ConEventHandler instance = (ConEventHandler)handle;
+	memset(instance, 0, CON_EVENTFD_SIZE);
+	instance->subscriber = (EventSubscriber)(instance + 1);
+	/*event callback is fixed, this is wrapper of con_fdevent_handler*/
+	instance->subscriber->event_callback = connection_handle_fdevent_cb;
+}
 
-
-connection *connection_init(server *srv) {
-	connection *con;
-
-	UNUSED(srv);
-
-	con = calloc(1, sizeof(*con));
-	force_assert(NULL != con);
-
+static void connection_init(server *srv, connection *con) {
 	con->fd = 0;
 	con->ndx = -1;
 	con->fde_ndx = -1;
@@ -558,6 +658,8 @@ connection *connection_init(server *srv) {
 	CLEAN(proto);
 	CLEAN(dst_addr_buf);
 
+	CLEAN(tmp_buf);
+	CLEAN(tmp_chunk_len);
 #undef CLEAN
 	con->write_queue = chunkqueue_init();
 	con->read_queue = chunkqueue_init();
@@ -566,6 +668,7 @@ connection *connection_init(server *srv) {
 	con->request.headers      = array_init();
 	con->response.headers     = array_init();
 	con->environment     = array_init();
+	con->split_vals = array_init();
 
 	/* init plugin specific connection structures */
 
@@ -576,17 +679,44 @@ connection *connection_init(server *srv) {
 	force_assert(NULL != con->cond_cache);
 	config_setup_connection(srv, con);
 
-	return con;
+	connection_state_machine_init(srv, con);
+	con->event_pool = mpool_create(CON_EVENTFD_SIZE, CON_MAX_EVENTFD, 1, connection_event_init);
+	force_assert(con->event_pool);
+}
+
+static inline int connection_is_init(connection * con) {
+	return (con->plugin_ctx != NULL);
+}
+
+static void connection_pool_connection_init(server *srv, unsigned short size) {
+	connection ** conns = calloc(size, sizeof(connection *));
+	force_assert(conns);
+	
+	unsigned short i;
+	for(i = 0 ; i < size ; i ++ ) {
+		conns[i] = mpool_get(srv->connspool);
+		connection_init(srv, conns[i]);
+	}
+	for(i = 0 ; i < size ; i ++ ) {
+		mpool_release(srv->connspool, conns[i]);
+	}
+	free(conns);
+}
+
+void connection_pool_init(server *srv) {
+	srv->connspool = mpool_create(sizeof(connection), srv->max_conns, 0, NULL);
+	force_assert(NULL != srv->connspool);
+	srv->conns_used = 0;
+
+	connection_pool_connection_init(srv, srv->max_conns >= 128 ? 128 : srv->max_conns > 16 ? 16 : srv->max_conns);
 }
 
 void connections_free(server *srv) {
-	connections *conns = srv->conns;
-	size_t i;
+	connection *con;
 
-	if (NULL == conns) return;
-
-	for (i = 0; i < conns->size; i++) {
-		connection *con = conns->ptr[i];
+	FOR_ALL_CON(srv, con) {
+		connection_state_machine_exit(srv, con);
+		mpool_delete(con->event_pool, NULL);
 
 		connection_reset(srv, con);
 
@@ -623,20 +753,22 @@ void connections_free(server *srv) {
 		CLEAN(server_name);
 		CLEAN(proto);
 		CLEAN(dst_addr_buf);
+
+		CLEAN(tmp_buf);
+		CLEAN(tmp_chunk_len);
 #undef CLEAN
 		free(con->plugin_ctx);
 		free(con->cond_cache);
-
-		free(con);
+		array_free(con->split_vals);
 	}
 
-	free(conns->ptr);
-	free(conns);
-	srv->conns = NULL;
+	mpool_delete(srv->connspool, NULL);
+	srv->connspool = NULL;
 }
 
 
-int connection_reset(server *srv, connection *con) {
+static int connection_reset(server *srv, connection *con) {
+//	fprintf(stderr, "[%x]%s\n",(unsigned int )pthread_self(),  __func__);
 	plugins_call_connection_reset(srv, con);
 
 	connection_response_reset(srv, con);
@@ -674,6 +806,9 @@ int connection_reset(server *srv, connection *con) {
 
 	CLEAN(server_name);
 	/*CLEAN(proto);*//* set to default in connection_accepted() */
+
+	CLEAN(tmp_buf);
+	CLEAN(tmp_chunk_len);
 #undef CLEAN
 
 #define CLEAN(x) \
@@ -693,6 +828,7 @@ int connection_reset(server *srv, connection *con) {
 
 	array_reset(con->request.headers);
 	array_reset(con->environment);
+	array_reset(con->split_vals);
 
 	chunkqueue_reset(con->request_content_queue);
 
@@ -706,7 +842,223 @@ int connection_reset(server *srv, connection *con) {
 	/*(error_handler_saved_method value is not valid unless error_handler_saved_status is set)*/
 
 	config_setup_connection(srv, con);
+//	fprintf(stderr, "[%x]%s exit\n",(unsigned int )pthread_self(),  __func__);
 
+	return 0;
+}
+
+static int connection_handle_request_start_state(server *srv, connection *con) {
+//	fprintf(stderr, "request start, thread:%x, con=%p\n", (unsigned int)pthread_self(), (void *)con);
+	con->request_start = server_get_cur_ts();
+	con->read_idle_ts = con->request_start;
+	if (con->conf.high_precision_timestamps)
+		log_clock_gettime_realtime(&con->request_start_hp);
+
+	con->request_count++;
+	con->loops_per_request = 0;
+
+	connection_set_state(srv, con, CON_STATE_READ);
+	return 0;
+}
+
+static int connection_handle_request_end_state(server *srv, connection *con) {
+	buffer_reset(con->uri.authority);
+	buffer_reset(con->uri.path);
+	buffer_reset(con->uri.query);
+	buffer_reset(con->request.orig_uri);
+
+	if (http_request_parse(srv, con)) {
+		/* we have to read some data from the POST request */
+
+		connection_set_state(srv, con, CON_STATE_READ_POST);
+
+		return 0;
+	}
+
+	connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
+	return 0;
+}
+
+static int connection_handle_handle_request_state(server *srv, connection *con) {
+	/*
+	 * the request is parsed
+	 *
+	 * decided what to do with the request
+	 * -
+	 *
+	 *
+	 */
+	int r = 0, done = 0;
+	switch (r = http_response_prepare(srv, con)) {
+	case HANDLER_WAIT_FOR_EVENT:
+		if (!con->file_finished && (!con->file_started || 0 == con->conf.stream_response_body)) {
+			break; /* come back here */
+		}
+		/* response headers received from backend; fall through to start response */
+		/* fall through */
+	case HANDLER_FINISHED:
+		if (con->error_handler_saved_status > 0) {
+			con->request.http_method = con->error_handler_saved_method;
+		}
+		if (con->mode == DIRECT || con->conf.error_intercept) {
+			if (con->error_handler_saved_status) {
+				if (con->error_handler_saved_status > 0) {
+					con->http_status = con->error_handler_saved_status;
+				} else if (con->http_status == 404 || con->http_status == 403) {
+					/* error-handler-404 is a 404 */
+					con->http_status = -con->error_handler_saved_status;
+				} else {
+					/* error-handler-404 is back and has generated content */
+					/* if Status: was set, take it otherwise use 200 */
+				}
+			} else if (con->http_status >= 400) {
+				buffer *error_handler = NULL;
+				if (!buffer_string_is_empty(con->conf.error_handler)) {
+					error_handler = con->conf.error_handler;
+				} else if ((con->http_status == 404 || con->http_status == 403)
+					   && !buffer_string_is_empty(con->conf.error_handler_404)) {
+					error_handler = con->conf.error_handler_404;
+				}
+
+				if (error_handler) {
+					/* call error-handler */
+
+					/* set REDIRECT_STATUS to save current HTTP status code
+					 * for access by dynamic handlers
+					 * https://redmine.lighttpd.net/issues/1828 */
+					data_string *ds;
+					if (NULL == (ds = (data_string *)array_get_unused_element(con->environment, TYPE_STRING))) {
+						ds = data_string_init();
+					}
+					buffer_copy_string_len(ds->key, CONST_STR_LEN("REDIRECT_STATUS"));
+					buffer_append_int(ds->value, con->http_status);
+					array_insert_unique(con->environment, (data_unset *)ds);
+
+					if (error_handler == con->conf.error_handler) {
+						plugins_call_connection_reset(srv, con);
+
+						if (con->request.content_length) {
+							if (con->request.content_length != con->request_content_queue->bytes_in) {
+								con->keep_alive = 0;
+							}
+							con->request.content_length = 0;
+							chunkqueue_reset(con->request_content_queue);
+						}
+
+						con->is_writable = 1;
+						con->file_finished = 0;
+						con->file_started = 0;
+						con->parsed_response = 0;
+						con->response.keep_alive = 0;
+						con->response.content_length = -1;
+						con->response.transfer_encoding = 0;
+
+						con->error_handler_saved_status = con->http_status;
+						con->error_handler_saved_method = con->request.http_method;
+
+						con->request.http_method = HTTP_METHOD_GET;
+					} else { /*(preserve behavior for server.error-handler-404)*/
+						con->error_handler_saved_status = -con->http_status; /*(negative to flag old behavior)*/
+					}
+
+					buffer_copy_buffer(con->request.uri, error_handler);
+					connection_handle_errdoc_init(srv, con);
+					con->http_status = 0; /*(after connection_handle_errdoc_init())*/
+
+					done = -1;
+					break;
+				}
+			}
+		}
+		if (con->http_status == 0) con->http_status = 200;
+
+		/* we have something to send, go on */
+		connection_set_state(srv, con, CON_STATE_RESPONSE_START);
+		break;
+	case HANDLER_WAIT_FOR_FD:
+		srv->want_fds++;
+
+		fdwaitqueue_append(srv, con);
+
+		break;
+	case HANDLER_COMEBACK:
+		done = -1;
+		break;
+	case HANDLER_ERROR:
+		/* something went wrong */
+		connection_set_state(srv, con, CON_STATE_ERROR);
+		break;
+	default:
+		log_error_write(srv, __FILE__, __LINE__, "sdd", "unknown ret-value: ", con->fd, r);
+		break;
+	}
+	return done;
+}
+
+static int connection_handle_response_start_state(server *srv, connection *con) {
+	/*
+	 * the decision is done
+	 * - create the HTTP-Response-Header
+	 *
+	 */
+
+	if (-1 == connection_handle_write_prepare(srv, con)) {
+		connection_set_state(srv, con, CON_STATE_ERROR);
+
+		return 0;
+	}
+
+	connection_set_state(srv, con, CON_STATE_WRITE);
+	return 0;
+}
+
+static int connection_handle_connect_state(server *srv, connection *con) {
+	UNUSED(srv);
+	chunkqueue_reset(con->read_queue);
+	con->request_count = 0;
+	return 0;
+}
+
+static int connection_handle_write_state(server *srv, connection *con) {
+	int r=0;
+	do {
+		/* only try to write if we have something in the queue */
+		if (!chunkqueue_is_empty(con->write_queue)) {
+			if (con->is_writable) {
+				if (-1 == connection_handle_write(srv, con)) {
+					log_error_write(srv, __FILE__, __LINE__, "ds",
+							con->fd,
+							"handle write failed.");
+					connection_set_state(srv, con, CON_STATE_ERROR);
+					break;
+				}
+				if (con->state != CON_STATE_WRITE) break;
+			}
+		} else if (con->file_finished) {
+			connection_set_state(srv, con, CON_STATE_RESPONSE_END);
+			break;
+		}
+
+		if (con->mode != DIRECT && !con->file_finished) {
+			switch(r = plugins_call_handle_subrequest(srv, con)) {
+			case HANDLER_WAIT_FOR_EVENT:
+			case HANDLER_FINISHED:
+			case HANDLER_GO_ON:
+				break;
+			case HANDLER_WAIT_FOR_FD:
+				srv->want_fds++;
+				fdwaitqueue_append(srv, con);
+				break;
+			case HANDLER_COMEBACK:
+			default:
+				log_error_write(srv, __FILE__, __LINE__, "sdd", "unexpected subrequest handler ret-value: ", con->fd, r);
+				/* fall through */
+			case HANDLER_ERROR:
+				connection_set_state(srv, con, CON_STATE_ERROR);
+				break;
+			}
+		}
+	} while (con->state == CON_STATE_WRITE && (!chunkqueue_is_empty(con->write_queue) ? con->is_writable : con->file_finished));
 	return 0;
 }
 
@@ -723,8 +1075,10 @@ static int connection_handle_read_state(server *srv, connection *con)  {
 	/* when in CON_STATE_READ: about to receive first byte for a request: */
 	int is_request_start = chunkqueue_is_empty(cq);
 
+	time_t cur_ts = server_get_cur_ts();
+
 	if (con->is_readable) {
-		con->read_idle_ts = srv->cur_ts;
+		con->read_idle_ts = cur_ts;
 
 		switch(con->network_read(srv, con, con->read_queue, MAX_READ_LIMIT)) {
 		case -1:
@@ -746,7 +1100,7 @@ static int connection_handle_read_state(server *srv, connection *con)  {
 	/* update request_start timestamp when first byte of
 	 * next request is received on a keep-alive connection */
 	if (con->request_count > 1 && is_request_start) {
-		con->request_start = srv->cur_ts;
+		con->request_start = cur_ts;
 		if (con->conf.high_precision_timestamps)
 			log_clock_gettime_realtime(&con->request_start_hp);
 	}
@@ -862,10 +1216,72 @@ found_header_end:
 	return 0;
 }
 
-static handler_t connection_handle_fdevent(server *srv, void *context, int revents) {
-	connection *con = context;
+static void connection_handle_fdevent_set(connection *con) {
+	int r = 0;
+	switch(con->state) {
+	case CON_STATE_READ:
+		r = FDEVENT_IN | FDEVENT_RDHUP;
+		break;
+	case CON_STATE_WRITE:
+		/* request write-fdevent only if we really need it
+		 * - if we have data to write
+		 * - if the socket is not writable yet
+		 */
+		if (!chunkqueue_is_empty(con->write_queue) &&
+		    (con->is_writable == 0) &&
+		    (con->traffic_limit_reached == 0)) {
+			r |= FDEVENT_OUT;
+		}
+		/* fall through */
+	case CON_STATE_READ_POST:
+		if (con->conf.stream_request_body & FDEVENT_STREAM_REQUEST_POLLIN) {
+			r |= FDEVENT_IN | FDEVENT_RDHUP;
+		}
+		break;
+	case CON_STATE_CLOSE:
+		r = FDEVENT_IN;
+		break;
+	default:
+		break;
+	}
+	if (con->fd >= 0) {
+		int events = connection_fdevent_get_interest(con->client_handler);
+		if (con->is_readable < 0) {
+			con->is_readable = 0;
+			r |= FDEVENT_IN;
+		}
+		if (con->is_writable < 0) {
+			con->is_writable = 0;
+			r |= FDEVENT_OUT;
+		}
+		if (events & FDEVENT_RDHUP) {
+			r |= FDEVENT_RDHUP;
+		}
+		if (r != events) {
+			/* update timestamps when enabling interest in events */
+			if ((r & FDEVENT_IN) && !(events & FDEVENT_IN)) {
+				con->read_idle_ts = server_get_cur_ts();
+			}
+			if ((r & FDEVENT_OUT) && !(events & FDEVENT_OUT)) {
+				con->write_request_ts = server_get_cur_ts();
+			}
+			connection_fdevent_set(con->client_handler, r);
+		}
+	}
 
-	joblist_append(srv, con);
+}
+
+static void connection_handle_fdevent_cb(int socketfd, short eventflag, void * event_arg) {
+	UNUSED(socketfd);
+	connection_request_ctx_t * req = (connection_request_ctx_t *)event_arg;
+	/*call handler*/
+	req->handler(req->srv, req->con, req->arg, connection_tpoolevent2fdevent((int)eventflag));
+}
+
+static handler_t connection_handle_fdevent(server *srv, connection *con, void *context, int revents) {
+
+	/*read event*/
+	UNUSED(context);
 
 	if (con->srv_socket->is_ssl) {
 		/* ssl may read and write for both reads and writes */
@@ -912,7 +1328,7 @@ static handler_t connection_handle_fdevent(server *srv, void *context, int reven
 
 	if ((revents & ~(FDEVENT_IN | FDEVENT_OUT)) && con->state != CON_STATE_ERROR) {
 		if (con->state == CON_STATE_CLOSE) {
-			con->close_timeout_ts = srv->cur_ts - (HTTP_LINGER_TIMEOUT+1);
+			con->close_timeout_ts = server_get_cur_ts() - (HTTP_LINGER_TIMEOUT+1);
 		} else if (revents & FDEVENT_HUP) {
 			connection_set_state(srv, con, CON_STATE_ERROR);
 		} else if (revents & FDEVENT_RDHUP) {
@@ -944,6 +1360,7 @@ static handler_t connection_handle_fdevent(server *srv, void *context, int reven
 		}
 	}
 
+	connection_state_machine(srv, con);
 	return HANDLER_FINISHED;
 }
 
@@ -959,7 +1376,7 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 	 * see #1216
 	 */
 
-	if (srv->conns->used >= srv->max_conns) {
+	if (srv->conns_used >= srv->max_conns) {
 		return NULL;
 	}
 
@@ -1018,6 +1435,7 @@ static int connection_read_cq(server *srv, connection *con, chunkqueue *cq, off_
 #else
 	len = read(con->fd, mem, mem_len);
 #endif /* __WIN32 */
+//	if(len < 0) fprintf(stderr, "read error:%s\n",strerror(errno) );
 
 	chunkqueue_use_memory(con->read_queue, len > 0 ? len : 0);
 
@@ -1084,30 +1502,31 @@ static int connection_write_cq(server *srv, connection *con, chunkqueue *cq, off
 	return srv->network_backend_write(srv, con->fd, cq, max_bytes);
 }
 
+static ConEventHandler connection_client_handler_register(server *srv, connection *con) {
+	return connection_fdevent_add(srv, con, con->fd, connection_handle_fdevent, NULL, 0);
+}
 
 connection *connection_accepted(server *srv, server_socket *srv_socket, sock_addr *cnt_addr, int cnt) {
 		connection *con;
 
-		srv->cur_fds++;
+		server_increment_cur_fds();
 
 		/* ok, we have the connection, register it */
 #if 0
 		log_error_write(srv, __FILE__, __LINE__, "sd",
 				"appected()", cnt);
 #endif
-		srv->con_opened++;
-
 		con = connections_get_new_connection(srv);
 
 		con->fd = cnt;
 		con->fde_ndx = -1;
-		fdevent_register(srv->ev, con->fd, connection_handle_fdevent, con);
+		con->client_handler = connection_client_handler_register(srv, con);
 		con->network_read = connection_read_cq;
 		con->network_write = connection_write_cq;
 
 		connection_set_state(srv, con, CON_STATE_REQUEST_START);
 
-		con->connection_start = srv->cur_ts;
+		con->connection_start = server_get_cur_ts();
 		con->dst_addr = *cnt_addr;
 		buffer_copy_string(con->dst_addr_buf, inet_ntop_cache_get_ip(srv, &(con->dst_addr)));
 		con->srv_socket = srv_socket;
@@ -1129,10 +1548,76 @@ connection *connection_accepted(server *srv, server_socket *srv_socket, sock_add
 		return con;
 }
 
+ConEventHandler connection_fdevent_add(server *srv, connection *con, int fd, con_fdevent_handler handler, void *ctx, int events) {
+	ConEventHandler instance = mpool_get(con->event_pool);
+	force_assert(instance);
+	instance->subscriber->fd = fd;
+	instance->ctx.srv = srv;
+	instance->ctx.con = con;
+	instance->ctx.arg = ctx;
+	instance->ctx.handler = handler;
+	/*convert eventflag, and set event */
+	instance->subscriber->eventflag = connection_fdevent2tpoolevent(events);
+	event_tpool_add_result_t result = event_tpool_add_thread(srv->threadpool, con->state_machine->thread_num, instance->subscriber, &instance->ctx);
+	force_assert(0<=result.result);
+
+	instance->eventdata = result.event_handle;
+	return instance;
+}
+
+void connection_fdevent_set(ConEventHandler ev, int events) {
+	/*convert eventflag, and set event */
+	ev->subscriber->eventflag = connection_fdevent2tpoolevent(events);
+	event_tpool_add_result_t result = event_tpool_update(ev->ctx.srv->threadpool, ev->eventdata, ev->subscriber, &ev->ctx);
+	force_assert(0<=result.result);
+}
+
+void connection_fdevent_clr(ConEventHandler ev, int event) {
+	ev->subscriber->eventflag &= ~connection_fdevent2tpoolevent(event);
+	event_tpool_add_result_t result = event_tpool_update(ev->ctx.srv->threadpool, ev->eventdata, ev->subscriber, &ev->ctx);
+	force_assert(0<=result.result);
+}
+
+void connection_fdevent_event_del(ConEventHandler ev) {
+	event_tpool_del(ev->ctx.srv->threadpool, ev->subscriber->fd);
+	mpool_release(ev->ctx.con->event_pool, ev);
+}
+
+int connection_fdevent_get_interest(ConEventHandler ev) {
+	if(!ev) return 0;
+	return connection_fdevent2tpoolevent(ev->subscriber->eventflag);
+}
+
+static handler_t connection_sched_close_cb(server *srv, connection * con, void *context, int revents) {
+	UNUSED(srv);
+	UNUSED(con);
+	UNUSED(revents);
+	ConEventHandler ev = (ConEventHandler)context;
+	connection_fdevent_event_del(ev);
+	close(ev->subscriber->fd);
+	return HANDLER_GO_ON;
+}
+
+void connection_fdevent_sched_close(ConEventHandler ev) {
+	ev->subscriber->eventflag |= EV_TPOOL_HUNGUP;
+	ev->ctx.handler = connection_sched_close_cb;
+	ev->ctx.arg = ev;
+	connection_fdevent_set(ev, connection_tpoolevent2fdevent(ev->subscriber->eventflag));
+}
+
+static void connection_state_machine_init(server *srv, connection *con) {
+	if(!con->state_machine) {
+		con->state_machine = state_machine_new(sizeof(state_event)/sizeof(state_event[0]), state_event, srv->threadpool);
+		state_machine_set_state(con->state_machine, CON_STATE_CONNECT);
+	}
+}
+
+void connection_state_machine_exit(server *srv, connection *con) {
+	UNUSED(srv);
+	state_machine_free(con->state_machine);
+}
 
 int connection_state_machine(server *srv, connection *con) {
-	int done = 0, r;
-
 	if (srv->srvconf.log_state_handling) {
 		log_error_write(srv, __FILE__, __LINE__, "sds",
 				"state at start",
@@ -1140,307 +1625,9 @@ int connection_state_machine(server *srv, connection *con) {
 				connection_get_state(con->state));
 	}
 
-	while (done == 0) {
-		size_t ostate = con->state;
-
-		if (srv->srvconf.log_state_handling) {
-			log_error_write(srv, __FILE__, __LINE__, "sds",
-					"state for fd", con->fd, connection_get_state(con->state));
-		}
-
-		switch (con->state) {
-		case CON_STATE_REQUEST_START: /* transient */
-			con->request_start = srv->cur_ts;
-			con->read_idle_ts = srv->cur_ts;
-			if (con->conf.high_precision_timestamps)
-				log_clock_gettime_realtime(&con->request_start_hp);
-
-			con->request_count++;
-			con->loops_per_request = 0;
-
-			connection_set_state(srv, con, CON_STATE_READ);
-
-			break;
-		case CON_STATE_REQUEST_END: /* transient */
-			buffer_reset(con->uri.authority);
-			buffer_reset(con->uri.path);
-			buffer_reset(con->uri.query);
-			buffer_reset(con->request.orig_uri);
-
-			if (http_request_parse(srv, con)) {
-				/* we have to read some data from the POST request */
-
-				connection_set_state(srv, con, CON_STATE_READ_POST);
-
-				break;
-			}
-
-			connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
-
-			break;
-		case CON_STATE_READ_POST:
-		case CON_STATE_HANDLE_REQUEST:
-			/*
-			 * the request is parsed
-			 *
-			 * decided what to do with the request
-			 * -
-			 *
-			 *
-			 */
-
-			switch (r = http_response_prepare(srv, con)) {
-			case HANDLER_WAIT_FOR_EVENT:
-				if (!con->file_finished && (!con->file_started || 0 == con->conf.stream_response_body)) {
-					break; /* come back here */
-				}
-				/* response headers received from backend; fall through to start response */
-				/* fall through */
-			case HANDLER_FINISHED:
-				if (con->error_handler_saved_status > 0) {
-					con->request.http_method = con->error_handler_saved_method;
-				}
-				if (con->mode == DIRECT || con->conf.error_intercept) {
-					if (con->error_handler_saved_status) {
-						if (con->error_handler_saved_status > 0) {
-							con->http_status = con->error_handler_saved_status;
-						} else if (con->http_status == 404 || con->http_status == 403) {
-							/* error-handler-404 is a 404 */
-							con->http_status = -con->error_handler_saved_status;
-						} else {
-							/* error-handler-404 is back and has generated content */
-							/* if Status: was set, take it otherwise use 200 */
-						}
-					} else if (con->http_status >= 400) {
-						buffer *error_handler = NULL;
-						if (!buffer_string_is_empty(con->conf.error_handler)) {
-							error_handler = con->conf.error_handler;
-						} else if ((con->http_status == 404 || con->http_status == 403)
-							   && !buffer_string_is_empty(con->conf.error_handler_404)) {
-							error_handler = con->conf.error_handler_404;
-						}
-
-						if (error_handler) {
-							/* call error-handler */
-
-							/* set REDIRECT_STATUS to save current HTTP status code
-							 * for access by dynamic handlers
-							 * https://redmine.lighttpd.net/issues/1828 */
-							data_string *ds;
-							if (NULL == (ds = (data_string *)array_get_unused_element(con->environment, TYPE_STRING))) {
-								ds = data_string_init();
-							}
-							buffer_copy_string_len(ds->key, CONST_STR_LEN("REDIRECT_STATUS"));
-							buffer_append_int(ds->value, con->http_status);
-							array_insert_unique(con->environment, (data_unset *)ds);
-
-							if (error_handler == con->conf.error_handler) {
-								plugins_call_connection_reset(srv, con);
-
-								if (con->request.content_length) {
-									if (con->request.content_length != con->request_content_queue->bytes_in) {
-										con->keep_alive = 0;
-									}
-									con->request.content_length = 0;
-									chunkqueue_reset(con->request_content_queue);
-								}
-
-								con->is_writable = 1;
-								con->file_finished = 0;
-								con->file_started = 0;
-								con->parsed_response = 0;
-								con->response.keep_alive = 0;
-								con->response.content_length = -1;
-								con->response.transfer_encoding = 0;
-
-								con->error_handler_saved_status = con->http_status;
-								con->error_handler_saved_method = con->request.http_method;
-
-								con->request.http_method = HTTP_METHOD_GET;
-							} else { /*(preserve behavior for server.error-handler-404)*/
-								con->error_handler_saved_status = -con->http_status; /*(negative to flag old behavior)*/
-							}
-
-							buffer_copy_buffer(con->request.uri, error_handler);
-							connection_handle_errdoc_init(srv, con);
-							con->http_status = 0; /*(after connection_handle_errdoc_init())*/
-
-							done = -1;
-							break;
-						}
-					}
-				}
-				if (con->http_status == 0) con->http_status = 200;
-
-				/* we have something to send, go on */
-				connection_set_state(srv, con, CON_STATE_RESPONSE_START);
-				break;
-			case HANDLER_WAIT_FOR_FD:
-				srv->want_fds++;
-
-				fdwaitqueue_append(srv, con);
-
-				break;
-			case HANDLER_COMEBACK:
-				done = -1;
-				break;
-			case HANDLER_ERROR:
-				/* something went wrong */
-				connection_set_state(srv, con, CON_STATE_ERROR);
-				break;
-			default:
-				log_error_write(srv, __FILE__, __LINE__, "sdd", "unknown ret-value: ", con->fd, r);
-				break;
-			}
-
-			if (con->state == CON_STATE_HANDLE_REQUEST && ostate == CON_STATE_READ_POST) {
-				ostate = CON_STATE_HANDLE_REQUEST;
-			}
-			break;
-		case CON_STATE_RESPONSE_START:
-			/*
-			 * the decision is done
-			 * - create the HTTP-Response-Header
-			 *
-			 */
-
-			if (-1 == connection_handle_write_prepare(srv, con)) {
-				connection_set_state(srv, con, CON_STATE_ERROR);
-
-				break;
-			}
-
-			connection_set_state(srv, con, CON_STATE_WRITE);
-			break;
-		case CON_STATE_RESPONSE_END: /* transient */
-		case CON_STATE_ERROR:        /* transient */
-			connection_handle_response_end_state(srv, con);
-			break;
-		case CON_STATE_CONNECT:
-			chunkqueue_reset(con->read_queue);
-
-			con->request_count = 0;
-
-			break;
-		case CON_STATE_CLOSE:
-			connection_handle_close_state(srv, con);
-			break;
-		case CON_STATE_READ:
-			connection_handle_read_state(srv, con);
-			break;
-		case CON_STATE_WRITE:
-			do {
-				/* only try to write if we have something in the queue */
-				if (!chunkqueue_is_empty(con->write_queue)) {
-					if (con->is_writable) {
-						if (-1 == connection_handle_write(srv, con)) {
-							log_error_write(srv, __FILE__, __LINE__, "ds",
-									con->fd,
-									"handle write failed.");
-							connection_set_state(srv, con, CON_STATE_ERROR);
-							break;
-						}
-						if (con->state != CON_STATE_WRITE) break;
-					}
-				} else if (con->file_finished) {
-					connection_set_state(srv, con, CON_STATE_RESPONSE_END);
-					break;
-				}
-
-				if (con->mode != DIRECT && !con->file_finished) {
-					switch(r = plugins_call_handle_subrequest(srv, con)) {
-					case HANDLER_WAIT_FOR_EVENT:
-					case HANDLER_FINISHED:
-					case HANDLER_GO_ON:
-						break;
-					case HANDLER_WAIT_FOR_FD:
-						srv->want_fds++;
-						fdwaitqueue_append(srv, con);
-						break;
-					case HANDLER_COMEBACK:
-					default:
-						log_error_write(srv, __FILE__, __LINE__, "sdd", "unexpected subrequest handler ret-value: ", con->fd, r);
-						/* fall through */
-					case HANDLER_ERROR:
-						connection_set_state(srv, con, CON_STATE_ERROR);
-						break;
-					}
-				}
-			} while (con->state == CON_STATE_WRITE && (!chunkqueue_is_empty(con->write_queue) ? con->is_writable : con->file_finished));
-
-			break;
-		default:
-			log_error_write(srv, __FILE__, __LINE__, "sdd",
-					"unknown state:", con->fd, con->state);
-
-			break;
-		}
-
-		if (done == -1) {
-			done = 0;
-		} else if (ostate == con->state) {
-			done = 1;
-		}
-	}
-
-	if (srv->srvconf.log_state_handling) {
-		log_error_write(srv, __FILE__, __LINE__, "sds",
-				"state at exit:",
-				con->fd,
-				connection_get_state(con->state));
-	}
-
-	r = 0;
-	switch(con->state) {
-	case CON_STATE_READ:
-		r = FDEVENT_IN | FDEVENT_RDHUP;
-		break;
-	case CON_STATE_WRITE:
-		/* request write-fdevent only if we really need it
-		 * - if we have data to write
-		 * - if the socket is not writable yet
-		 */
-		if (!chunkqueue_is_empty(con->write_queue) &&
-		    (con->is_writable == 0) &&
-		    (con->traffic_limit_reached == 0)) {
-			r |= FDEVENT_OUT;
-		}
-		/* fall through */
-	case CON_STATE_READ_POST:
-		if (con->conf.stream_request_body & FDEVENT_STREAM_REQUEST_POLLIN) {
-			r |= FDEVENT_IN | FDEVENT_RDHUP;
-		}
-		break;
-	case CON_STATE_CLOSE:
-		r = FDEVENT_IN;
-		break;
-	default:
-		break;
-	}
-	if (con->fd >= 0) {
-		const int events = fdevent_event_get_interest(srv->ev, con->fd);
-		if (con->is_readable < 0) {
-			con->is_readable = 0;
-			r |= FDEVENT_IN;
-		}
-		if (con->is_writable < 0) {
-			con->is_writable = 0;
-			r |= FDEVENT_OUT;
-		}
-		if (events & FDEVENT_RDHUP) {
-			r |= FDEVENT_RDHUP;
-		}
-		if (r != events) {
-			/* update timestamps when enabling interest in events */
-			if ((r & FDEVENT_IN) && !(events & FDEVENT_IN)) {
-				con->read_idle_ts = srv->cur_ts;
-			}
-			if ((r & FDEVENT_OUT) && !(events & FDEVENT_OUT)) {
-				con->write_request_ts = srv->cur_ts;
-			}
-			fdevent_event_set(srv->ev, &con->fde_ndx, con->fd, r);
-		}
-	}
-
+	http_connection_t http_con ={.srv=srv, .con=con, .ostate=connection_get_ostate(con)};
+	state_machine_call_event(con->state_machine, CON_EVENT_RUN, &http_con, sizeof(http_con), NULL);
 	return 0;
 }
+
+

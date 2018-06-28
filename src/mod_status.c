@@ -328,7 +328,8 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	buffer_append_string_len(b, CONST_STR_LEN(")</td></tr>\n"));
 	buffer_append_string_len(b, CONST_STR_LEN("<tr><td>Uptime</td><td class=\"string\">"));
 
-	ts = srv->cur_ts - srv->startup_ts;
+	time_t cur_ts = server_get_cur_ts();
+	ts = cur_ts - srv->startup_ts;
 
 	days = ts / (60 * 60 * 24);
 	ts %= (60 * 60 * 24);
@@ -397,7 +398,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	buffer_append_string_len(b, CONST_STR_LEN("<tr><th colspan=\"2\">average (since start)</th></tr>\n"));
 
 	buffer_append_string_len(b, CONST_STR_LEN("<tr><td>Requests</td><td class=\"string\">"));
-	avg = p->abs_requests / (srv->cur_ts - srv->startup_ts);
+	avg = p->abs_requests / (cur_ts - srv->startup_ts);
 
 	mod_status_get_multiplier(&avg, &multiplier, 1000);
 
@@ -407,7 +408,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	buffer_append_string_len(b, CONST_STR_LEN("req/s</td></tr>\n"));
 
 	buffer_append_string_len(b, CONST_STR_LEN("<tr><td>Traffic</td><td class=\"string\">"));
-	avg = p->abs_traffic_out / (srv->cur_ts - srv->startup_ts);
+	avg = p->abs_traffic_out / (cur_ts - srv->startup_ts);
 
 	mod_status_get_multiplier(&avg, &multiplier, 1024);
 
@@ -457,11 +458,11 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	buffer_append_string_len(b, CONST_STR_LEN("<hr />\n<pre>\n"));
 
 	buffer_append_string_len(b, CONST_STR_LEN("<b>"));
-	buffer_append_int(b, srv->conns->used);
+	buffer_append_int(b, srv->conns_used);
 	buffer_append_string_len(b, CONST_STR_LEN(" connections</b>\n"));
 
-	for (j = 0; j < srv->conns->used; j++) {
-		connection *c = srv->conns->ptr[j];
+	connection *c;
+	FOR_ALL_CON(srv,c) {
 		const char *state;
 
 		if (CON_STATE_READ == c->state && !buffer_string_is_empty(c->request.orig_uri)) {
@@ -509,8 +510,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	mod_status_header_append_sort(b, p_d, "File");
 	buffer_append_string_len(b, CONST_STR_LEN("</tr>\n"));
 
-	for (j = 0; j < srv->conns->used; j++) {
-		connection *c = srv->conns->ptr[j];
+	FOR_ALL_CON(srv,c) {
 
 		buffer_append_string_len(b, CONST_STR_LEN("<tr><td class=\"string\">"));
 
@@ -542,7 +542,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 
 		buffer_append_string_len(b, CONST_STR_LEN("</td><td class=\"int\">"));
 
-		buffer_append_int(b, srv->cur_ts - c->request_start);
+		buffer_append_int(b, cur_ts - c->request_start);
 
 		buffer_append_string_len(b, CONST_STR_LEN("</td><td class=\"string\">"));
 
@@ -601,7 +601,7 @@ static handler_t mod_status_handle_server_status_text(server *srv, connection *c
 	double avg;
 	time_t ts;
 	char buf[32];
-	unsigned int k;
+	unsigned int k = 0;
 	unsigned int l;
 
 	/* output total number of requests */
@@ -620,30 +620,31 @@ static handler_t mod_status_handle_server_status_text(server *srv, connection *c
 
 	/* output uptime */
 	buffer_append_string_len(b, CONST_STR_LEN("Uptime: "));
-	ts = srv->cur_ts - srv->startup_ts;
+	ts = server_get_cur_ts() - srv->startup_ts;
 	buffer_append_int(b, ts);
 	buffer_append_string_len(b, CONST_STR_LEN("\n"));
 
 	/* output busy servers */
 	buffer_append_string_len(b, CONST_STR_LEN("BusyServers: "));
-	buffer_append_int(b, srv->conns->used);
+	buffer_append_int(b, srv->conns_used);
 	buffer_append_string_len(b, CONST_STR_LEN("\n"));
 
 	buffer_append_string_len(b, CONST_STR_LEN("IdleServers: "));
-	buffer_append_int(b, srv->conns->size - srv->conns->used);
+	buffer_append_int(b, srv->max_conns - srv->conns_used);
 	buffer_append_string_len(b, CONST_STR_LEN("\n"));
 
 	/* output scoreboard */
 	buffer_append_string_len(b, CONST_STR_LEN("Scoreboard: "));
-	for (k = 0; k < srv->conns->used; k++) {
-		connection *c = srv->conns->ptr[k];
+	connection *c;
+	FOR_ALL_CON(srv, c) {
+		k++;
 		const char *state =
 		  (CON_STATE_READ == c->state && !buffer_string_is_empty(c->request.orig_uri))
 		    ? "k"
 		    : connection_get_short_state(c->state);
 		buffer_append_string_len(b, state, 1);
 	}
-	for (l = 0; l < srv->conns->size - srv->conns->used; l++) {
+	for (l = k + 1; l < srv->conns_used; l++) {
 		buffer_append_string_len(b, CONST_STR_LEN("_"));
 	}
 	buffer_append_string_len(b, CONST_STR_LEN("\n"));
@@ -698,17 +699,17 @@ static handler_t mod_status_handle_server_status_json(server *srv, connection *c
 
 	/* output uptime */
 	buffer_append_string_len(b, CONST_STR_LEN("\t\"Uptime\": "));
-	ts = srv->cur_ts - srv->startup_ts;
+	ts = server_get_cur_ts() - srv->startup_ts;
 	buffer_append_int(b, ts);
 	buffer_append_string_len(b, CONST_STR_LEN(",\n"));
 
 	/* output busy servers */
 	buffer_append_string_len(b, CONST_STR_LEN("\t\"BusyServers\": "));
-	buffer_append_int(b, srv->conns->used);
+	buffer_append_int(b, srv->conns_used);
 	buffer_append_string_len(b, CONST_STR_LEN(",\n"));
 
 	buffer_append_string_len(b, CONST_STR_LEN("\t\"IdleServers\": "));
-	buffer_append_int(b, srv->conns->size - srv->conns->used);
+	buffer_append_int(b, srv->max_conns - srv->conns_used);
 	buffer_append_string_len(b, CONST_STR_LEN(",\n"));
 
 	for (j = 0, avg = 0; j < 5; j++) {
@@ -924,12 +925,10 @@ static handler_t mod_status_handler(server *srv, connection *con, void *p_d) {
 
 TRIGGER_FUNC(mod_status_trigger) {
 	plugin_data *p = p_d;
-	size_t i;
 
 	/* check all connections */
-	for (i = 0; i < srv->conns->used; i++) {
-		connection *c = srv->conns->ptr[i];
-
+	connection *c;
+	FOR_ALL_CON(srv, c) {
 		p->bytes_written += c->bytes_written_cur_second;
 	}
 

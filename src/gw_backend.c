@@ -32,7 +32,7 @@
 #include "status_counter.h"
 
 static data_integer * gw_status_get_di(server *srv, gw_host *host, gw_proc *proc, const char *tag, size_t len) {
-    buffer *b = srv->tmp_buf;
+    buffer *b = buffer_init();
     buffer_copy_string_len(b, CONST_STR_LEN("gw.backend."));
     buffer_append_string_buffer(b, host->id);
     if (proc) {
@@ -40,7 +40,9 @@ static data_integer * gw_status_get_di(server *srv, gw_host *host, gw_proc *proc
         buffer_append_int(b, proc->id);
     }
     buffer_append_string_len(b, tag, len);
-    return status_counter_get_counter(srv, CONST_BUF_LEN(b));
+    data_integer * di = status_counter_get_counter(srv, CONST_BUF_LEN(b));
+    buffer_free(b);
+    return di;
 }
 
 static void gw_proc_tag_inc(server *srv, gw_host *host, gw_proc *proc, const char *tag, size_t len) {
@@ -228,7 +230,7 @@ static int gw_extension_insert(gw_exts *ext, buffer *key, gw_host *fh) {
 
 static void gw_proc_connect_success(server *srv, gw_host *host, gw_proc *proc, int debug) {
     gw_proc_tag_inc(srv, host, proc, CONST_STR_LEN(".connected"));
-    proc->last_used = srv->cur_ts;
+    proc->last_used = server_get_cur_ts();
 
     if (debug) {
         log_error_write(srv, __FILE__, __LINE__, "ssdsbsd",
@@ -245,7 +247,7 @@ static void gw_proc_connect_error(server *srv, gw_host *host, gw_proc *proc, pid
                     "socket:", proc->connection_name);
 
     if (!proc->is_local) {
-        proc->disabled_until = srv->cur_ts + host->disable_time;
+        proc->disabled_until = server_get_cur_ts() + host->disable_time;
         gw_proc_set_state(host, proc, PROC_STATE_OVERLOADED);
     }
     else if (proc->pid == pid && proc->state == PROC_STATE_RUNNING) {
@@ -276,7 +278,7 @@ static void gw_proc_connect_error(server *srv, gw_host *host, gw_proc *proc, pid
                   "decrease server.max-connections.  The load for this FastCGI "
                   "backend", proc->connection_name, "is", proc->load);
             }
-            proc->disabled_until = srv->cur_ts + host->disable_time;
+            proc->disabled_until = server_get_cur_ts() + host->disable_time;
             gw_proc_set_state(host, proc, PROC_STATE_OVERLOADED);
         }
         else {
@@ -287,7 +289,7 @@ static void gw_proc_connect_error(server *srv, gw_host *host, gw_proc *proc, pid
           #if 0
             gw_proc_set_state(host, proc, PROC_STATE_DIED_WAIT_FOR_PID);
           #else  /* treat as overloaded (future: unless we send kill() signal)*/
-            proc->disabled_until = srv->cur_ts + host->disable_time;
+            proc->disabled_until = server_get_cur_ts() + host->disable_time;
             gw_proc_set_state(host, proc, PROC_STATE_OVERLOADED);
           #endif
         }
@@ -314,7 +316,7 @@ static void gw_proc_release(server *srv, gw_host *host, gw_proc *proc, int debug
 }
 
 static void gw_proc_check_enable(server *srv, gw_host *host, gw_proc *proc) {
-    if (srv->cur_ts <= proc->disabled_until) return;
+    if (server_get_cur_ts() <= proc->disabled_until) return;
     if (proc->state != PROC_STATE_OVERLOADED) return;
 
     gw_proc_set_state(host, proc, PROC_STATE_RUNNING);
@@ -368,7 +370,7 @@ static int gw_proc_waitpid(server *srv, gw_host *host, gw_proc *proc) {
 
     proc->pid = 0;
     if (proc->state != PROC_STATE_KILLED)
-        proc->disabled_until = srv->cur_ts;
+        proc->disabled_until = server_get_cur_ts();
     gw_proc_set_state(host, proc, PROC_STATE_DIED);
     return 1;
 }
@@ -594,12 +596,12 @@ static int gw_spawn_connection(server *srv, gw_host *host, gw_proc *proc, int de
             log_error_write(srv, __FILE__, __LINE__, "sb",
                             "gw-backend failed to start:", host->bin_path);
             proc->pid = 0;
-            proc->disabled_until = srv->cur_ts;
+            proc->disabled_until = server_get_cur_ts();
             return -1;
         }
 
         /* register process */
-        proc->last_used = srv->cur_ts;
+        proc->last_used = server_get_cur_ts();
         proc->is_local = 1;
 
         /* wait */
@@ -636,7 +638,7 @@ static void gw_proc_spawn(server *srv, gw_host *host, int debug) {
         /* (proc->pid <= 0 indicates PROC_STATE_DIED, not PROC_STATE_KILLED) */
         if (proc->pid > 0) continue;
         /* (do not attempt to spawn another proc if a proc just exited) */
-        if (proc->disabled_until >= srv->cur_ts) return;
+        if (proc->disabled_until >= server_get_cur_ts()) return;
         break;
     }
     if (proc) {
@@ -1028,7 +1030,7 @@ static void gw_restart_dead_procs(server *srv, gw_host *host, int debug) {
                 if (proc->load != 0) break;
 
                 /* avoid spinning if child exits too quickly */
-                if (proc->disabled_until >= srv->cur_ts) break;
+                if (proc->disabled_until >= server_get_cur_ts()) break;
 
                 /* restart the child */
 
@@ -1637,8 +1639,9 @@ int gw_set_defaults_balance(server *srv, gw_plugin_config *s, data_unset *du) {
 }
 
 static void gw_set_state(server *srv, gw_handler_ctx *hctx, gw_connection_state_t state) {
+    UNUSED(srv);
     hctx->state = state;
-    hctx->state_timestamp = srv->cur_ts;
+    hctx->state_timestamp = server_get_cur_ts();
 }
 
 
@@ -1748,11 +1751,11 @@ static handler_t gw_write_request(server *srv, gw_handler_ctx *hctx) {
 
             log_error_write(srv, __FILE__, __LINE__, "ssdd",
                             "socket failed:", strerror(errno),
-                            srv->cur_fds, srv->max_fds);
+                           server_get_cur_fds(), srv->max_fds);
             return HANDLER_ERROR;
         }
 
-        srv->cur_fds++;
+        server_increment_cur_fds();
 
         fdevent_register(srv->ev, hctx->fd, gw_handle_fdevent, hctx);
 
@@ -2012,7 +2015,7 @@ static handler_t gw_recv_response(server *srv, gw_handler_ctx *hctx) {
     buffer *b = hctx->opts.backend == BACKEND_FASTCGI
       ? buffer_init()
       : hctx->response;
-
+#if 0
     switch (http_response_read(srv, hctx->remote_conn, &hctx->opts,
                                b, hctx->fd, &hctx->fde_ndx)) {
     default:
@@ -2037,7 +2040,7 @@ static handler_t gw_recv_response(server *srv, gw_handler_ctx *hctx) {
                 physpath = con->physical.path;
             }
 
-            proc->last_used = srv->cur_ts;
+            proc->last_used = server_get_cur_ts();
             gw_backend_close(srv, hctx);
             handler_ctx_clear(hctx);
 
@@ -2077,7 +2080,7 @@ static handler_t gw_recv_response(server *srv, gw_handler_ctx *hctx) {
         if (proc->is_local && 1 == proc->load && proc->pid == hctx->pid
             && proc->state != PROC_STATE_DIED && 0 == srv->srvconf.max_worker) {
             /* intentionally check proc->disabed_until before gw_proc_waitpid */
-            if (proc->disabled_until < srv->cur_ts
+            if (proc->disabled_until < server_get_cur_ts()
                 && 0 != gw_proc_waitpid(srv, host, proc)) {
                 if (hctx->conf.debug) {
                     log_error_write(srv, __FILE__, __LINE__, "ssbsdsd",
@@ -2123,7 +2126,7 @@ static handler_t gw_recv_response(server *srv, gw_handler_ctx *hctx) {
         gw_connection_close(srv, hctx);
         return HANDLER_FINISHED;
     }
-
+#endif
     if (b != hctx->response) buffer_free(b);
     return HANDLER_GO_ON;
 }
@@ -2454,7 +2457,7 @@ static void gw_handle_trigger_host(server *srv, gw_host *host, int debug) {
         gw_proc_spawn(srv, host, debug);
     }
 
-    idle_timestamp = srv->cur_ts - host->idle_timeout;
+    idle_timestamp = server_get_cur_ts() - host->idle_timeout;
     for (proc = host->first; proc; proc = proc->next) {
         if (host->num_procs <= host->min_procs) break;
         if (0 != proc->load) continue;
@@ -2523,6 +2526,7 @@ handler_t gw_handle_waitpid_cb(server *srv, void *p_d, pid_t pid, int status) {
     if (0 != srv->srvconf.max_worker && p->srv_pid != srv->pid)
         return HANDLER_GO_ON;
 
+    time_t cur_ts = server_get_cur_ts();
     for (size_t i = 0; i < srv->config_context->used; ++i) {
         gw_plugin_config *conf = p->config_storage[i];
         gw_exts *exts = conf->exts;
@@ -2541,9 +2545,9 @@ handler_t gw_handle_waitpid_cb(server *srv, void *p_d, pid_t pid, int status) {
                     proc->pid = 0;
 
                     /* restart, but avoid spinning if child exits too quickly */
-                    if (proc->disabled_until < srv->cur_ts) {
+                    if (proc->disabled_until < cur_ts) {
                         if (proc->state != PROC_STATE_KILLED)
-                            proc->disabled_until = srv->cur_ts;
+                            proc->disabled_until = cur_ts;
                         if (gw_spawn_connection(srv, host, proc, debug)) {
                             log_error_write(srv, __FILE__, __LINE__, "s",
                                             "ERROR: spawning gw failed.");
@@ -2557,7 +2561,7 @@ handler_t gw_handle_waitpid_cb(server *srv, void *p_d, pid_t pid, int status) {
 
                     gw_proc_waitpid_log(srv, host, proc, status);
                     if (proc->state != PROC_STATE_KILLED)
-                        proc->disabled_until = srv->cur_ts;
+                        proc->disabled_until = cur_ts;
                     gw_proc_set_state(host, proc, PROC_STATE_DIED);
                     proc->pid = 0;
                     return HANDLER_FINISHED;

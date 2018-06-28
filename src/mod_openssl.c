@@ -1654,11 +1654,11 @@ https_add_ssl_client_entries (server *srv, connection *con, handler_ctx *hctx)
     if (vr != X509_V_OK) {
         char errstr[256];
         ERR_error_string_n(vr, errstr, sizeof(errstr));
-        buffer_copy_string_len(srv->tmp_buf, CONST_STR_LEN("FAILED:"));
-        buffer_append_string(srv->tmp_buf, errstr);
+        buffer_copy_string_len(con->tmp_buf, CONST_STR_LEN("FAILED:"));
+        buffer_append_string(con->tmp_buf, errstr);
         array_set_key_value(con->environment,
                             CONST_STR_LEN("SSL_CLIENT_VERIFY"),
-                            CONST_BUF_LEN(srv->tmp_buf));
+                            CONST_BUF_LEN(con->tmp_buf));
         return;
     } else if (!(xs = SSL_get_peer_certificate(hctx->ssl))) {
         array_set_key_value(con->environment,
@@ -1682,7 +1682,7 @@ https_add_ssl_client_entries (server *srv, connection *con, handler_ctx *hctx)
                                 buf, (size_t)len);
         }
     }
-    buffer_copy_string_len(srv->tmp_buf, CONST_STR_LEN("SSL_CLIENT_S_DN_"));
+    buffer_copy_string_len(con->tmp_buf, CONST_STR_LEN("SSL_CLIENT_S_DN_"));
     for (i = 0, nentries = X509_NAME_entry_count(xn); i < nentries; ++i) {
         int xobjnid;
         const char * xobjsn;
@@ -1694,10 +1694,10 @@ https_add_ssl_client_entries (server *srv, connection *con, handler_ctx *hctx)
         xobjnid = OBJ_obj2nid((ASN1_OBJECT*)X509_NAME_ENTRY_get_object(xe));
         xobjsn = OBJ_nid2sn(xobjnid);
         if (xobjsn) {
-            buffer_string_set_length(srv->tmp_buf,sizeof("SSL_CLIENT_S_DN_")-1);
-            buffer_append_string(srv->tmp_buf, xobjsn);
+            buffer_string_set_length(con->tmp_buf,sizeof("SSL_CLIENT_S_DN_")-1);
+            buffer_append_string(con->tmp_buf, xobjsn);
             array_set_key_value(con->environment,
-                                CONST_BUF_LEN(srv->tmp_buf),
+                                CONST_BUF_LEN(con->tmp_buf),
                                 (const char*)X509_NAME_ENTRY_get_data(xe)->data,
                                 X509_NAME_ENTRY_get_data(xe)->length);
         }

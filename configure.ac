@@ -576,7 +576,7 @@ AC_ARG_WITH([openssl],
     [Include openssl support (default no)]
   )],
   [WITH_OPENSSL=$withval],
-  [WITH_OPENSSL=no]
+  [WITH_OPENSSL=yes]
 )
 AC_MSG_RESULT([$WITH_OPENSSL])
 
@@ -1218,6 +1218,27 @@ if test "$ipv6" = true; then
     AC_MSG_ERROR([IPv6 seems broken.  Fix it or build with --disable-ipv6])
   fi
 fi
+
+dnl check whether main needs -lstate_machine
+AC_SEARCH_LIBS([event_tpool_manager_new], [event_threadpool])
+AC_SEARCH_LIBS([state_machine_new], [state_machine])
+AC_SEARCH_LIBS([mpool_create], [memorypool])
+AC_SEARCH_LIBS([dp_timelog_init], [dputil])
+
+dnl Check for dpfc
+AC_MSG_NOTICE([----------------------------------------])
+AC_MSG_CHECKING([for SateMachine])
+AC_ARG_WITH([statemachine],
+  [AC_HELP_STRING([--with-statemachine=DIR],
+    [Add include state machine dir (default /usr/local/)]
+  )],
+  [WITH_STATEMACHINE=$withval],
+  [WITH_STATEMACHINE="/usr/local"]
+)
+AC_MSG_RESULT([$WITH_STATEMACHINE])
+
+CPPFLAGS="${CPPFLAGS} -I$WITH_STATEMACHINE/include"
+LDFLAGS="${LDFLAGS} -Xlinker -rpath -Xlinker $WITH_STATEMACHINE/lib"
 
 # disable mmap by default
 # lighttpd may always use mmap with files it owns (created tmp files)

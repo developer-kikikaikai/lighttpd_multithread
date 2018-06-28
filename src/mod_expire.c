@@ -383,7 +383,7 @@ CONNECTION_FUNC(mod_expire_handler) {
 	}
 
 	if (NULL != ds) {
-			time_t ts, expires;
+			time_t ts, expires, cur_ts = server_get_cur_ts();
 			stat_cache_entry *sce = NULL;
 
 			/* if stat fails => sce == NULL, ignore return value */
@@ -392,7 +392,7 @@ CONNECTION_FUNC(mod_expire_handler) {
 			switch(mod_expire_get_offset(srv, p, ds->value, &ts)) {
 			case 0:
 				/* access */
-				expires = (ts + srv->cur_ts);
+				expires = (ts + cur_ts);
 				break;
 			case 1:
 				/* modification */
@@ -410,7 +410,7 @@ CONNECTION_FUNC(mod_expire_handler) {
 			}
 
 			/* expires should be at least srv->cur_ts */
-			if (expires < srv->cur_ts) expires = srv->cur_ts;
+			if (expires < cur_ts) expires = cur_ts;
 
 			buffer_string_prepare_copy(p->expire_tstmp, 255);
 			buffer_append_strftime(p->expire_tstmp, "%a, %d %b %Y %H:%M:%S GMT", gmtime(&(expires)));
@@ -420,7 +420,7 @@ CONNECTION_FUNC(mod_expire_handler) {
 
 			/* HTTP/1.1 */
 			buffer_copy_string_len(p->expire_tstmp, CONST_STR_LEN("max-age="));
-			buffer_append_int(p->expire_tstmp, expires - srv->cur_ts); /* as expires >= srv->cur_ts the difference is >= 0 */
+			buffer_append_int(p->expire_tstmp, expires - cur_ts); /* as expires >= srv->cur_ts the difference is >= 0 */
 
 			response_header_append(srv, con, CONST_STR_LEN("Cache-Control"), CONST_BUF_LEN(p->expire_tstmp));
 

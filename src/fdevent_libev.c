@@ -139,8 +139,10 @@ int fdevent_libev_init(fdevents *ev) {
 	memset(timer, 0, sizeof(*timer));
 
 	ev->type = FDEVENT_HANDLER_LIBEV;
+	fdevent_callback_t callback={0};
+
 #define SET(x) \
-	ev->x = fdevent_libev_##x;
+	callback.x = fdevent_libev_##x;
 
 	SET(free);
 	SET(poll);
@@ -152,6 +154,8 @@ int fdevent_libev_init(fdevents *ev) {
 	SET(event_next_fdndx);
 	SET(event_get_fd);
 	SET(event_get_revent);
+#undef SET
+	fdevent_set(&callback);
 
 	if (NULL == (ev->libev_loop = ev_default_loop(0))) {
 		log_error_write(ev->srv, __FILE__, __LINE__, "S",

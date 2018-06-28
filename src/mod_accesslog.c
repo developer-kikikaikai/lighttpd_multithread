@@ -7,6 +7,7 @@
 #include "sock_addr.h"
 
 #include "plugin.h"
+#include "server.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -685,7 +686,7 @@ static void log_access_flush(server *srv, void *p_d) {
 
 TRIGGER_FUNC(log_access_periodic_flush) {
 	/* flush buffered access logs every 4 seconds */
-	if (0 == (srv->cur_ts & 3)) log_access_flush(srv, p_d);
+	if (0 == (server_get_cur_ts() & 3)) log_access_flush(srv, p_d);
 	return HANDLER_GO_ON;
 }
 
@@ -769,6 +770,7 @@ REQUESTDONE_FUNC(log_access_write) {
 	data_string *ds;
 	struct timespec ts = { 0, 0 };
 
+	time_t cur_ts = server_get_cur_ts();
 	mod_accesslog_patch_connection(srv, con, p);
 
 	/* No output device, nothing to do */
@@ -796,7 +798,7 @@ REQUESTDONE_FUNC(log_access_write) {
 
 				if (f->opt & ~(FORMAT_FLAG_TIME_BEGIN|FORMAT_FLAG_TIME_END)) {
 					if (f->opt & FORMAT_FLAG_TIME_SEC) {
-						time_t t = (!(f->opt & FORMAT_FLAG_TIME_BEGIN)) ? srv->cur_ts : con->request_start;
+						time_t t = (!(f->opt & FORMAT_FLAG_TIME_BEGIN)) ? cur_ts : con->request_start;
 						buffer_append_int(b, (intmax_t)t);
 					} else if (f->opt & (FORMAT_FLAG_TIME_MSEC|FORMAT_FLAG_TIME_USEC|FORMAT_FLAG_TIME_NSEC)) {
 						off_t t; /*(expected to be 64-bit since large file support enabled)*/
@@ -844,7 +846,7 @@ REQUESTDONE_FUNC(log_access_write) {
 						for (ptr = b->ptr + buffer_string_length(b); ns > 0; ns /= 10)
 							*--ptr = (ns % 10) + '0';
 					}
-				} else if (!(f->opt & FORMAT_FLAG_TIME_BEGIN) && srv->cur_ts == *(p->conf.last_generated_accesslog_ts_ptr)) {
+				} else if (!(f->opt & FORMAT_FLAG_TIME_BEGIN) && cur_ts == *(p->conf.last_generated_accesslog_ts_ptr)) {
 					buffer_append_string_buffer(b, p->conf.ts_accesslog_str);
 				} else {
 					/* cache the generated timestamp (only if ! FORMAT_FLAG_TIME_BEGIN) */
@@ -861,7 +863,7 @@ REQUESTDONE_FUNC(log_access_write) {
 				      #endif /* HAVE_STRUCT_TM_GMTOFF */
 
 					if (!(f->opt & FORMAT_FLAG_TIME_BEGIN)) {
-						t = *(p->conf.last_generated_accesslog_ts_ptr) = srv->cur_ts;
+						t = *(p->conf.last_generated_accesslog_ts_ptr) = cur_ts;
 						newts = 1;
 					} else {
 						t = con->request_start;
@@ -913,7 +915,7 @@ REQUESTDONE_FUNC(log_access_write) {
 			case FORMAT_TIME_USED:
 			case FORMAT_TIME_USED_US:
 				if (f->opt & FORMAT_FLAG_TIME_SEC) {
-					buffer_append_int(b, srv->cur_ts - con->request_start);
+					buffer_append_int(b, cur_ts - con->request_start);
 				} else {
 					const struct timespec * const bs = &con->request_start_hp;
 					off_t tdiff; /*(expected to be 64-bit since large file support enabled)*/

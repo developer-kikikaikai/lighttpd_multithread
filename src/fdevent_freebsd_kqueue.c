@@ -187,8 +187,9 @@ static int fdevent_freebsd_kqueue_reset(fdevents *ev) {
 
 int fdevent_freebsd_kqueue_init(fdevents *ev) {
 	ev->type = FDEVENT_HANDLER_FREEBSD_KQUEUE;
+	fdevent_callback_t callback={0};
 #define SET(x) \
-	ev->x = fdevent_freebsd_kqueue_##x;
+	callback.x = fdevent_freebsd_kqueue_##x;
 
 	SET(free);
 	SET(poll);
@@ -200,6 +201,8 @@ int fdevent_freebsd_kqueue_init(fdevents *ev) {
 	SET(event_next_fdndx);
 	SET(event_get_fd);
 	SET(event_get_revent);
+#undef SET
+	fdevent_set(&callback);
 
 	ev->kq_fd = -1;
 
