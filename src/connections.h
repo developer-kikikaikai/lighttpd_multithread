@@ -20,6 +20,7 @@ void connection_fdevent_clr(ConEventHandler ev, int event);
 void connection_fdevent_event_del(ConEventHandler ev);
 int connection_fdevent_get_interest(ConEventHandler ev);
 void connection_fdevent_sched_close(ConEventHandler ev);
+void connection_joblist_append(connection *con);
 
 int connection_set_state(server *srv, connection *con, connection_state_t state);
 const char * connection_get_state(connection_state_t state);

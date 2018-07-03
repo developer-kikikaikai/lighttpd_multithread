@@ -1249,8 +1249,8 @@ handler_t http_response_read(server *srv, connection *con, http_response_opts *o
                   ? HANDLER_FINISHED  /* read finished */
                   : HANDLER_GO_ON;    /* optimistic read; data not ready */
               #else
-                if (!(fdevent_event_get_interest(srv->ev, fd) & FDEVENT_IN))
-                    return HANDLER_GO_ON; /* optimistic read; data not ready */
+               // if (!(fdevent_event_get_interest(srv->ev, fd) & FDEVENT_IN))
+               //     return HANDLER_GO_ON; /* optimistic read; data not ready */
                 toread = 4096; /* let read() below indicate if EOF or EAGAIN */
               #endif
             }

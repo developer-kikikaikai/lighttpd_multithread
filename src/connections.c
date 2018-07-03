@@ -322,10 +322,6 @@ static int connection_handle_response_end_state(server *srv, connection *con) {
 
         if (con->keep_alive) {
 		connection_reset(srv, con);
-#if 0
-		con->request_start = server_get_cur_ts();
-		con->read_idle_ts = con->request_start;
-#endif
 		connection_set_state(srv, con, CON_STATE_REQUEST_START);
 	} else {
 		connection_handle_shutdown(srv, con);
@@ -682,6 +678,7 @@ static void connection_init(server *srv, connection *con) {
 	connection_state_machine_init(srv, con);
 	con->event_pool = mpool_create(CON_EVENTFD_SIZE, CON_MAX_EVENTFD, 1, connection_event_init);
 	force_assert(con->event_pool);
+	con->is_appendjob = 0;
 }
 
 static inline int connection_is_init(connection * con) {
@@ -1272,10 +1269,15 @@ static void connection_handle_fdevent_set(connection *con) {
 }
 
 static void connection_handle_fdevent_cb(int socketfd, short eventflag, void * event_arg) {
+	server_update_cur_ts(time(NULL));
 	UNUSED(socketfd);
 	connection_request_ctx_t * req = (connection_request_ctx_t *)event_arg;
 	/*call handler*/
 	req->handler(req->srv, req->con, req->arg, connection_tpoolevent2fdevent((int)eventflag));
+	if(req->con->is_appendjob) {
+		connection_state_machine(req->srv, req->con);
+		req->con->is_appendjob=0;
+	}
 }
 
 static handler_t connection_handle_fdevent(server *srv, connection *con, void *context, int revents) {

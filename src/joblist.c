@@ -32,6 +32,10 @@ JOB_UNLOCK
 	return 0;
 }
 
+void connection_joblist_append(connection *con) {
+	con->is_appendjob=1;
+}
+
 void joblist_call(server *srv) {
 JOB_LOCK
 	size_t ndx;

@@ -309,7 +309,7 @@ static handler_t cgi_handle_fdevent_send (server *srv, connection *con, void *ct
 	handler_ctx *hctx = ctx;
 
 	/*(joblist only actually necessary here in mod_cgi fdevent send if returning HANDLER_ERROR)*/
-	joblist_append(srv, con);
+	connection_joblist_append(con);
 
 	if (revents & FDEVENT_OUT) {
 		if (0 != cgi_write_request(srv, con, hctx, hctx->fdtocgi)) {
@@ -400,7 +400,7 @@ static int cgi_recv_response(server *srv, connection * con, handler_ctx *hctx) {
 static handler_t cgi_handle_fdevent(server *srv, connection  *con, void *ctx, int revents) {
 	handler_ctx *hctx = ctx;
 
-	joblist_append(srv, con);
+	connection_joblist_append(con);
 
 	if (revents & FDEVENT_IN) {
 		handler_t rc = cgi_recv_response(srv, con, hctx);/*(might invalidate hctx)*/
@@ -779,6 +779,7 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, handler_
 		close(to_cgi_fds[1]);
 		return -1;
 	} else {
+		event_tpool_atfork_child(srv->threadpool);
 		if (-1 != dfd) close(dfd);
 		close(from_cgi_fds[1]);
 		close(to_cgi_fds[0]);
@@ -794,7 +795,6 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, handler_
 		} else {
 			/* there is content to send */
 			if (-1 == fdevent_fcntl_set_nb(srv->ev, to_cgi_fds[1])) {
-				log_error_write(srv, __FILE__, __LINE__, "ss", "fcntl failed: ", strerror(errno));
 				close(to_cgi_fds[1]);
 				cgi_connection_close(srv, con, hctx);
 				return -1;
@@ -816,7 +816,6 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, handler_
 			return -1;
 		}
 		connection_fdevent_set(hctx->ev_fromcgi, FDEVENT_IN | FDEVENT_RDHUP);
-
 		return 0;
 	}
 }
@@ -968,7 +967,7 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 		} else {
 			handler_t r = connection_handle_read_post_state(srv, con);
 			if (!chunkqueue_is_empty(cq)) {
-				if (fdevent_event_get_interest(srv->ev, hctx->fdtocgi) & FDEVENT_OUT) {
+				if (connection_fdevent_get_interest(hctx->ev_tocgi) & FDEVENT_OUT) {
 					return (r == HANDLER_GO_ON) ? HANDLER_WAIT_FOR_EVENT : r;
 				}
 			}

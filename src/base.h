@@ -423,6 +423,9 @@ struct connection {
 	/*connection event handler pool*/
 	MemoryPool event_pool;
 	ConEventHandler client_handler;
+
+	/*joblist handle*/
+	int is_appendjob;
 };
 
 typedef struct {
