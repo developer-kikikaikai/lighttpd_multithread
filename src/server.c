@@ -1785,7 +1785,13 @@ static int server_main (server * const srv, int argc, char **argv) {
 					int changed = 0;
 					int t_diff;
 
-					if (con->state == CON_STATE_CLOSE) {
+					/*close connection*/
+					if(graceful_shutdown) {
+						if(con->state != CON_STATE_CLOSE || con->state != CON_STATE_ERROR) {
+							connection_set_state(srv, con, CON_STATE_CLOSE);
+							changed = 1;
+						}
+					} else if (con->state == CON_STATE_CLOSE) {
 						if ( - con->close_timeout_ts > HTTP_LINGER_TIMEOUT) {
 							changed = 1;
 						}
