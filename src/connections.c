@@ -50,7 +50,6 @@ struct connection_event_handler_t {
 	EventSubscriber subscriber;
 	connection_request_ctx_t ctx;
 	EventTPoolThreadInfo eventdata;
-//	EventTPoolFDData eventdata;
 };
 
 static inline int connection_tpoolevent2fdevent(int eventflag) {
@@ -84,11 +83,12 @@ static void connection_state_machine_exit(server *srv, connection *con);
 static int connection_del(server *srv, connection *con);
 static void connection_handle_fdevent_cb(int socketfd, short eventflag, void * event_arg);
 
-static void connection_event_init(void * handle);
+static void connection_event_init(void *handle, void *param);
 static void connection_init(server *srv, connection *con);
 static int connection_reset(server *srv, connection *con);
 static inline int connection_is_init(connection *con);
-static void connection_pool_connection_init(server *srv, unsigned short size);
+static void connection_pool_connection_init(void *this, void *srv);
+//static void connection_pool_connection_init(connection *con, server *srv);
 
 static inline int connection_get_ostate(connection *con) {
 	return (con->state==CON_STATE_READ_POST)?CON_STATE_HANDLE_REQUEST:con->state;
@@ -170,28 +170,20 @@ static const state_event_info_t state_event[] = {
 };
 
 static connection *connections_get_new_connection(server *srv) {
-//	if(!srv->connspool) connection_pool_init(srv);
+	//fprintf(stderr, "%s\n", __func__);
 
 	connection * con = mpool_get(srv->connspool);
 	force_assert(con != NULL);
 
 	if(!connection_is_init(con)) {
-		connection_init(srv, con);
-		
-		connection_pool_connection_init(srv, srv->max_conns - srv->conns_used - 1 >= 128 ? 128 : srv->max_conns - srv->conns_used - 1 > 16 ? 16 : srv->max_conns - srv->conns_used - 1);
+		connection_reset(srv, con);
 	}
 
-	connection_reset(srv, con);
-
-	con->ndx = srv->conns_used++;
 	return con;
 }
 
 static int connection_del(server *srv, connection *con) {
-//	fprintf(stderr, "%s\n", __func__);
 	if (con == NULL) return -1;
-
-	if (-1 == con->ndx) return -1;
 
 	buffer_reset(con->uri.authority);
 	buffer_reset(con->uri.path);
@@ -200,9 +192,7 @@ static int connection_del(server *srv, connection *con) {
 
 	/* not last element */
 	mpool_release(srv->connspool, con);
-	srv->conns_used--;
 
-	con->ndx = -1;
 	return 0;
 }
 
@@ -236,6 +226,7 @@ static int connection_close(server *srv, connection *con) {
 				"connection closed for fd", con->fd);
 	}
 	}
+//	fprintf(stderr, "%s %d\n", __func__, con->fd);
 	con->fd = -1;
 
 	/* plugins should have cleaned themselves up */
@@ -610,7 +601,8 @@ static int connection_handle_write(server *srv, connection *con) {
 	return 0;
 }
 
-static void connection_event_init(void *handle) {
+static void connection_event_init(void *handle, void *param) {
+	UNUSED(param);
 	ConEventHandler instance = (ConEventHandler)handle;
 	memset(instance, 0, CON_EVENTFD_SIZE);
 	instance->subscriber = (EventSubscriber)(instance + 1);
@@ -620,7 +612,6 @@ static void connection_event_init(void *handle) {
 
 static void connection_init(server *srv, connection *con) {
 	con->fd = 0;
-	con->ndx = -1;
 	con->fde_ndx = -1;
 	con->bytes_written = 0;
 	con->bytes_read = 0;
@@ -676,36 +667,26 @@ static void connection_init(server *srv, connection *con) {
 	config_setup_connection(srv, con);
 
 	connection_state_machine_init(srv, con);
-	con->event_pool = mpool_create(CON_EVENTFD_SIZE, CON_MAX_EVENTFD, 1, connection_event_init);
+	con->event_pool = mpool_create(CON_EVENTFD_SIZE, CON_MAX_EVENTFD, 1, connection_event_init, NULL);
 	force_assert(con->event_pool);
 	con->is_appendjob = 0;
 }
 
 static inline int connection_is_init(connection * con) {
-	return (con->plugin_ctx != NULL);
+	return buffer_string_is_empty(con->request.uri);
 }
 
-static void connection_pool_connection_init(server *srv, unsigned short size) {
-	connection ** conns = calloc(size, sizeof(connection *));
-	force_assert(conns);
-	
-	unsigned short i;
-	for(i = 0 ; i < size ; i ++ ) {
-		conns[i] = mpool_get(srv->connspool);
-		connection_init(srv, conns[i]);
-	}
-	for(i = 0 ; i < size ; i ++ ) {
-		mpool_release(srv->connspool, conns[i]);
-	}
-	free(conns);
+static void connection_pool_connection_init(void *this, void *param) {
+	connection *con = (connection *)this;
+	server *srv = (server *)param;
+
+	connection_init(srv, con);
 }
+
 
 void connection_pool_init(server *srv) {
-	srv->connspool = mpool_create(sizeof(connection), srv->max_conns, 0, NULL);
+	srv->connspool = mpool_create(sizeof(connection), srv->max_conns, 1, connection_pool_connection_init, srv);
 	force_assert(NULL != srv->connspool);
-	srv->conns_used = 0;
-
-	connection_pool_connection_init(srv, srv->max_conns >= 128 ? 128 : srv->max_conns > 16 ? 16 : srv->max_conns);
 }
 
 void connections_free(server *srv) {
@@ -1378,7 +1359,7 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 	 * see #1216
 	 */
 
-	if (srv->conns_used >= srv->max_conns) {
+	if (mpool_get_usedcnt(srv->connspool) >= srv->max_conns) {
 		return NULL;
 	}
 

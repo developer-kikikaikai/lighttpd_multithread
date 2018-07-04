@@ -349,7 +349,6 @@ struct connection {
 
 	int fd;                      /* the FD for this connection */
 	int fde_ndx;                 /* index for the fdevent-handler */
-	int ndx;                     /* reverse mapping to server->connection[ndx] */
 
 	/* fd states */
 	int is_readable;
@@ -557,7 +556,6 @@ struct server {
 
 	/* pool data for con */
 	MemoryPool connspool;
-	size_t conns_used;
 
 	struct stat_cache *stat_cache;
 

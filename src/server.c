@@ -1911,6 +1911,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 			} while (pid > 0 || (-1 == pid && errno == EINTR));
 		}
 
+		size_t usedcnt = mpool_get_usedcnt(srv->connspool);
 		if (graceful_shutdown) {
 			server_graceful_state(srv);
 			srv->sockets_disabled = 1;
@@ -1918,20 +1919,20 @@ static int server_main (server * const srv, int argc, char **argv) {
 			/* our server sockets are disabled, why ? */
 
 			if ((server_get_cur_fds() + srv->want_fds < srv->max_fds * 8 / 10) && /* we have enough unused fds */
-			    (srv->conns_used <= srv->max_conns * 9 / 10)) {
+			    (usedcnt <= srv->max_conns * 9 / 10)) {
 				server_sockets_set_event(srv, FDEVENT_IN);
 				log_error_write(srv, __FILE__, __LINE__, "s", "[note] sockets enabled again");
 
 				srv->sockets_disabled = 0;
 			}
 		} else {
-			if ((srv->conns_used >= srv->max_conns) || /* out of connections */
+			if ((usedcnt >= srv->max_conns) || /* out of connections */
 			    (server_get_cur_fds() + srv->want_fds > srv->max_fds * 9 / 10) ) { /* out of fds */
 				/* disable server-fds */
 				server_sockets_set_event(srv, 0);
 
-				if (srv->conns_used >= srv->max_conns) {
-					log_error_write(srv, __FILE__, __LINE__, "s", "[note] sockets disabled, connection limit reached");
+				if (usedcnt >= srv->max_conns) {
+					log_error_write(srv, __FILE__, __LINE__, "sd", "[note] sockets disabled, connection limit reached", usedcnt);
 				} else {
 					log_error_write(srv, __FILE__, __LINE__, "s", "[note] sockets disabled, out-of-fds");
 				}
@@ -1940,7 +1941,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 			}
 		}
 
-		if (graceful_shutdown && srv->conns_used == 0) {
+		if (graceful_shutdown && usedcnt == 0) {
 			/* we are in graceful shutdown phase and all connections are closed
 			 * we are ready to terminate without harming anyone */
 			srv_shutdown = 1;

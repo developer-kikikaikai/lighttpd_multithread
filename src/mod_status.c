@@ -458,7 +458,8 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	buffer_append_string_len(b, CONST_STR_LEN("<hr />\n<pre>\n"));
 
 	buffer_append_string_len(b, CONST_STR_LEN("<b>"));
-	buffer_append_int(b, srv->conns_used);
+	size_t conns_used = mpool_get_usedcnt(srv->connspool);
+	buffer_append_int(b, conns_used);
 	buffer_append_string_len(b, CONST_STR_LEN(" connections</b>\n"));
 
 	connection *c;
@@ -626,11 +627,12 @@ static handler_t mod_status_handle_server_status_text(server *srv, connection *c
 
 	/* output busy servers */
 	buffer_append_string_len(b, CONST_STR_LEN("BusyServers: "));
-	buffer_append_int(b, srv->conns_used);
+	size_t conns_used = mpool_get_usedcnt(srv->connspool);
+	buffer_append_int(b, conns_used);
 	buffer_append_string_len(b, CONST_STR_LEN("\n"));
 
 	buffer_append_string_len(b, CONST_STR_LEN("IdleServers: "));
-	buffer_append_int(b, srv->max_conns - srv->conns_used);
+	buffer_append_int(b, srv->max_conns - conns_used);
 	buffer_append_string_len(b, CONST_STR_LEN("\n"));
 
 	/* output scoreboard */
@@ -644,7 +646,7 @@ static handler_t mod_status_handle_server_status_text(server *srv, connection *c
 		    : connection_get_short_state(c->state);
 		buffer_append_string_len(b, state, 1);
 	}
-	for (l = k + 1; l < srv->conns_used; l++) {
+	for (l = k + 1; l < conns_used; l++) {
 		buffer_append_string_len(b, CONST_STR_LEN("_"));
 	}
 	buffer_append_string_len(b, CONST_STR_LEN("\n"));
@@ -705,11 +707,12 @@ static handler_t mod_status_handle_server_status_json(server *srv, connection *c
 
 	/* output busy servers */
 	buffer_append_string_len(b, CONST_STR_LEN("\t\"BusyServers\": "));
-	buffer_append_int(b, srv->conns_used);
+	size_t conns_used = mpool_get_usedcnt(srv->connspool);
+	buffer_append_int(b, conns_used);
 	buffer_append_string_len(b, CONST_STR_LEN(",\n"));
 
 	buffer_append_string_len(b, CONST_STR_LEN("\t\"IdleServers\": "));
-	buffer_append_int(b, srv->max_conns - srv->conns_used);
+	buffer_append_int(b, srv->max_conns - conns_used);
 	buffer_append_string_len(b, CONST_STR_LEN(",\n"));
 
 	for (j = 0, avg = 0; j < 5; j++) {
