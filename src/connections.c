@@ -1551,8 +1551,8 @@ ConEventHandler connection_fdevent_add(server *srv, connection *con, int fd, con
 void connection_fdevent_set(ConEventHandler ev, int events) {
 	/*convert eventflag, and set event */
 	ev->subscriber->eventflag = connection_fdevent2tpoolevent(events);
-	event_tpool_add_result_t result = event_tpool_update(ev->ctx.srv->threadpool, ev->eventdata, ev->subscriber, &ev->ctx);
-	force_assert(0<=result.result);
+	/* there is a case "delete connection and receive msg at same time", don't need to care result*/
+	event_tpool_update(ev->ctx.srv->threadpool, ev->eventdata, ev->subscriber, &ev->ctx);
 }
 
 void connection_fdevent_clr(ConEventHandler ev, int event) {
