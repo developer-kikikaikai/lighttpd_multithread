@@ -818,6 +818,8 @@ static int connection_reset(server *srv, connection *con) {
 	con->header_len = 0;
 	con->async_callback = 0;
 	con->error_handler_saved_status = 0;
+
+	con->is_appendjob = 0;
 	/*con->error_handler_saved_method = HTTP_METHOD_UNSET;*/
 	/*(error_handler_saved_method value is not valid unless error_handler_saved_status is set)*/
 
@@ -1565,7 +1567,8 @@ void connection_fdevent_clr(ConEventHandler ev, int event) {
 
 void connection_fdevent_event_del(ConEventHandler ev) {
 	event_tpool_del(ev->ctx.srv->threadpool, ev->subscriber->fd);
-	mpool_release(ev->ctx.con->event_pool, ev);
+	connection * con = ev->ctx.con;
+	mpool_release(con->event_pool, ev);
 }
 
 int connection_fdevent_get_interest(ConEventHandler ev) {
@@ -1577,9 +1580,7 @@ static handler_t connection_sched_close_cb(server *srv, connection * con, void *
 	UNUSED(srv);
 	UNUSED(con);
 	UNUSED(revents);
-	ConEventHandler ev = (ConEventHandler)context;
-	connection_fdevent_event_del(ev);
-	close(ev->subscriber->fd);
+	connection_fdevent_sched_close_directory((ConEventHandler)context);
 	return HANDLER_GO_ON;
 }
 
@@ -1588,6 +1589,11 @@ void connection_fdevent_sched_close(ConEventHandler ev) {
 	ev->ctx.handler = connection_sched_close_cb;
 	ev->ctx.arg = ev;
 	connection_fdevent_set(ev, connection_tpoolevent2fdevent(ev->subscriber->eventflag));
+}
+
+void connection_fdevent_sched_close_directory(ConEventHandler ev) {
+	connection_fdevent_event_del(ev);
+	close(ev->subscriber->fd);
 }
 
 static void connection_state_machine_init(server *srv, connection *con) {

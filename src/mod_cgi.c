@@ -89,7 +89,6 @@ typedef struct {
 	char env_string[1024];
 	char body_file[UNIX_PATH_MAX];
 	char usock_name[UNIX_PATH_MAX];
-	int usock_fd;
 	plugin_config conf;
 } handler_ctx;
 
@@ -237,6 +236,7 @@ SETDEFAULTS_FUNC(mod_fastcgi_set_defaults) {
 static void cgi_connection_close(server *srv, connection *con, handler_ctx *hctx) {
 	plugin_data *p = hctx->plugin_data;
 
+	fprintf(stderr, "%s enter\n", __func__);
 	/* the connection to the browser went away, but we still have a connection
 	 * to the CGI script
 	 *
@@ -245,10 +245,10 @@ static void cgi_connection_close(server *srv, connection *con, handler_ctx *hctx
 
 	if (hctx->fd != -1) {
 		/*fdevent_unregister(srv->ev, hctx->fd);*//*(handled below)*/
-		connection_fdevent_sched_close(hctx->ev_fromcgi);
+		connection_fdevent_sched_close_directory(hctx->ev_fromcgi);
 	}
 
-	
+	fprintf(stderr, "%s reset\n", __func__);
 	con->plugin_ctx[p->id] = NULL;
 
 	cgi_handler_ctx_free(hctx);
@@ -260,8 +260,10 @@ static void cgi_connection_close(server *srv, connection *con, handler_ctx *hctx
 }
 
 static handler_t cgi_connection_close_callback(server *srv, connection *con, void *p_d) {
+	fprintf(stderr, "%s enter\n", __func__);
 	plugin_data *p = p_d;
 	handler_ctx *hctx = con->plugin_ctx[p->id];
+	fprintf(stderr, "%s close\n", __func__);
 	if (hctx) cgi_connection_close(srv, con, hctx);
 
 	return HANDLER_GO_ON;
@@ -301,10 +303,15 @@ static handler_t cgi_response_headers(server *srv, connection *con, struct http_
 
 
 static int cgi_recv_response(server *srv, connection * con, handler_ctx *hctx) {
-		switch (http_response_read(srv, con, &hctx->opts,
-					   hctx->response, hctx->fd, hctx->ev_fromcgi)) {
+		int ret = http_response_read(srv, con, &hctx->opts,hctx->response, hctx->fd, hctx->ev_fromcgi);
+		switch (ret) {
 		default:
-			return HANDLER_GO_ON;
+			if(con->response.transfer_encoding & ~HTTP_TRANSFER_ENCODING_CHUNKED && con->file_finished != 1) {
+				return HANDLER_GO_ON;
+			} else {
+				cgi_connection_close(srv, con, hctx);
+				return HANDLER_FINISHED;
+			}
 		case HANDLER_ERROR:
 			http_response_backend_error(srv, con);
 			/* fall through */
@@ -799,6 +806,7 @@ static size_t mod_cgi_find_usock_info(plugin_data *p, pthread_t tid) {
 }
 
 URIHANDLER_FUNC(cgi_is_handled) {
+	fprintf(stderr, "%s\n", __func__);
 	plugin_data *p = p_d;
 	buffer *fn = con->physical.path;
 	stat_cache_entry *sce = NULL;
@@ -873,6 +881,7 @@ URIHANDLER_FUNC(cgi_is_handled) {
  * - HANDLER_WAIT_FOR_EVENT: waiting for response
  */
 SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
+	fprintf(stderr, "%s\n", __func__);
 	plugin_data *p = p_d;
 	handler_ctx *hctx = con->plugin_ctx[p->id];
 	chunkqueue *cq = con->request_content_queue;
