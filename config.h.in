@@ -1,5 +1,8 @@
 /* config.h.in.  Generated from configure.ac by autoheader.  */
 
+/* "Define CGI CommandService path" */
+#undef CGI_COMMAND_SERVICE_PATH
+
 /* Use mmap if available */
 #undef ENABLE_MMAP
 

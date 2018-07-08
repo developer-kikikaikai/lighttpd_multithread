@@ -1305,6 +1305,13 @@ if test "$extrawarnings" = true || test "$extrawarnings" = error; then
   fi
 fi
 
+#add CommandServicePath
+AC_DEFINE([CGI_COMMAND_SERVICE_PATH], ["dummy"], ["Define CGI CommandService path"])
+case ${prefix} in
+  NONE) $as_echo "#define CGI_COMMAND_SERVICE_PATH \"${ac_default_prefix}/sbin\"" >>confdefs.h;;
+  *) $as_echo "#define CGI_COMMAND_SERVICE_PATH \"${prefix}/sbin\"" >>confdefs.h;;
+esac
+
 dnl build version-id
 LIGHTTPD_VERSION_ID=m4_format([0x%x%02x%02x], m4_unquote(m4_split(AC_PACKAGE_VERSION, [\.])))
 AC_DEFINE_UNQUOTED([LIGHTTPD_VERSION_ID], [$LIGHTTPD_VERSION_ID], [lighttpd-version-id])
@@ -1327,6 +1334,7 @@ AC_CONFIG_FILES([\
   tests/docroot/www/indexfile/Makefile \
   tests/docroot/www/Makefile \
   tests/Makefile \
+  tools/Makefile \
 ])
 AC_OUTPUT
 

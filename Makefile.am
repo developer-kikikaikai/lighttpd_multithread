@@ -1,4 +1,4 @@
-SUBDIRS=src doc tests
+SUBDIRS=src doc tests tools
 
 EXTRA_DIST=autogen.sh SConstruct CMakeLists.txt meson.build meson_options.txt README.FreeBSD scripts
 

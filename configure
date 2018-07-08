@@ -18523,6 +18523,15 @@ ac_compiler_gnu=$ac_cv_c_compiler_gnu
   fi
 fi
 
+#add CommandServicePath
+
+$as_echo "#define CGI_COMMAND_SERVICE_PATH \"dummy\"" >>confdefs.h
+
+case ${prefix} in
+  NONE) $as_echo "#define CGI_COMMAND_SERVICE_PATH \"${ac_default_prefix}/sbin\"" >>confdefs.h;;
+  *) $as_echo "#define CGI_COMMAND_SERVICE_PATH \"${prefix}/sbin\"" >>confdefs.h;;
+esac
+
 LIGHTTPD_VERSION_ID=0x10431
 
 cat >>confdefs.h <<_ACEOF
@@ -18530,7 +18539,7 @@ cat >>confdefs.h <<_ACEOF
 _ACEOF
 
 
-ac_config_files="$ac_config_files distribute.sh doc/config/conf.d/Makefile doc/config/Makefile doc/config/vhosts.d/Makefile doc/Makefile doc/outdated/Makefile doc/scripts/Makefile doc/systemd/Makefile Makefile src/Makefile tests/docroot/123/Makefile tests/docroot/Makefile tests/docroot/www/expire/Makefile tests/docroot/www/go/Makefile tests/docroot/www/indexfile/Makefile tests/docroot/www/Makefile tests/Makefile"
+ac_config_files="$ac_config_files distribute.sh doc/config/conf.d/Makefile doc/config/Makefile doc/config/vhosts.d/Makefile doc/Makefile doc/outdated/Makefile doc/scripts/Makefile doc/systemd/Makefile Makefile src/Makefile tests/docroot/123/Makefile tests/docroot/Makefile tests/docroot/www/expire/Makefile tests/docroot/www/go/Makefile tests/docroot/www/indexfile/Makefile tests/docroot/www/Makefile tests/Makefile tools/Makefile"
 
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
@@ -19624,6 +19633,7 @@ do
     "tests/docroot/www/indexfile/Makefile") CONFIG_FILES="$CONFIG_FILES tests/docroot/www/indexfile/Makefile" ;;
     "tests/docroot/www/Makefile") CONFIG_FILES="$CONFIG_FILES tests/docroot/www/Makefile" ;;
     "tests/Makefile") CONFIG_FILES="$CONFIG_FILES tests/Makefile" ;;
+    "tools/Makefile") CONFIG_FILES="$CONFIG_FILES tools/Makefile" ;;
 
   *) as_fn_error $? "invalid argument: \`$ac_config_target'" "$LINENO" 5;;
   esac
