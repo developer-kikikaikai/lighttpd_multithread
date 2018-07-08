@@ -56,6 +56,7 @@ static inline int connection_tpoolevent2fdevent(int eventflag) {
 	int ret_eveflag=0;
 	if(eventflag&EV_TPOOL_READ) ret_eveflag |= FDEVENT_IN;
 	if(eventflag&EV_TPOOL_WRITE) ret_eveflag |= FDEVENT_OUT;
+	if(eventflag&EV_TPOOL_HUNGUP) ret_eveflag |= FDEVENT_HUP;
 	return ret_eveflag;
 }
 
@@ -63,10 +64,11 @@ static inline int connection_fdevent2tpoolevent(int eventflag) {
 	int ret_eveflag=0;
 	if(eventflag&FDEVENT_IN) ret_eveflag |= EV_TPOOL_READ;
 	if(eventflag&FDEVENT_OUT) ret_eveflag |= EV_TPOOL_WRITE;
+	if(eventflag&FDEVENT_HUP) ret_eveflag |= EV_TPOOL_HUNGUP;
 	return ret_eveflag;
 }
 
-#define CON_MAX_EVENTFD (16)
+#define CON_MAX_EVENTFD (32)
 #define CON_EVENTFD_SIZE (sizeof(connection_event_handler_t)+ sizeof(event_subscriber_t))
 static int connection_handle_close_state(server *srv, connection *con);
 static int connection_handle_response_end_state(server *srv, connection *con);
