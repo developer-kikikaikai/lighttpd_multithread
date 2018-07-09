@@ -236,7 +236,6 @@ SETDEFAULTS_FUNC(mod_fastcgi_set_defaults) {
 static void cgi_connection_close(server *srv, connection *con, handler_ctx *hctx) {
 	plugin_data *p = hctx->plugin_data;
 
-	fprintf(stderr, "%s enter\n", __func__);
 	/* the connection to the browser went away, but we still have a connection
 	 * to the CGI script
 	 *
@@ -246,9 +245,9 @@ static void cgi_connection_close(server *srv, connection *con, handler_ctx *hctx
 	if (hctx->fd != -1) {
 		/*fdevent_unregister(srv->ev, hctx->fd);*//*(handled below)*/
 		connection_fdevent_sched_close_directory(hctx->ev_fromcgi);
+		hctx->fd = -1;
 	}
 
-	fprintf(stderr, "%s reset\n", __func__);
 	con->plugin_ctx[p->id] = NULL;
 
 	cgi_handler_ctx_free(hctx);
@@ -260,10 +259,8 @@ static void cgi_connection_close(server *srv, connection *con, handler_ctx *hctx
 }
 
 static handler_t cgi_connection_close_callback(server *srv, connection *con, void *p_d) {
-	fprintf(stderr, "%s enter\n", __func__);
 	plugin_data *p = p_d;
 	handler_ctx *hctx = con->plugin_ctx[p->id];
-	fprintf(stderr, "%s close\n", __func__);
 	if (hctx) cgi_connection_close(srv, con, hctx);
 
 	return HANDLER_GO_ON;
@@ -589,7 +586,6 @@ static void cgi_open_resp_sock(handler_ctx *hctx) {
 	sa.sun_family = AF_UNIX;
 	snprintf(sa.sun_path, sizeof(sa.sun_path), "%s", hctx->usock_name);
 	if(bind(fd, (struct sockaddr*)&sa, sizeof(struct sockaddr_un)) == -1) {
-		fprintf(stderr, "bind error:%s\n", strerror(errno));
 		force_assert(0);
 	}
 	hctx->fd = fd;
@@ -599,7 +595,8 @@ static void cgi_send_command(handler_ctx *hctx) {
 	size_t i = mod_cgi_find_usock_info(hctx->plugin_data, pthread_self());
 	int pid = fork();
 	if(pid != 0) {
-		return;
+		int status;
+		waitpid(pid, &status, 0);
 	} else {
 		char *args[]={
 			CGI_CMD_CLIENT,/*CommandClient command*/
@@ -632,7 +629,8 @@ static void cgi_start_server_command(plugin_data *p, size_t index) {
 static void cgi_stop_server_command(plugin_data *p, size_t index){
 	int pid = fork();
 	if(pid != 0) {
-		return;
+		int status;
+		waitpid(pid, &status, 0);
 	} else {
 		char *args[]={
 			CGI_CMD_SERVER,
@@ -707,8 +705,7 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, handler_
 	cgi_open_resp_sock(hctx);
 
 	/* register event */
-	hctx->ev_fromcgi = connection_fdevent_add(srv, con, hctx->fd, cgi_handle_fdevent, hctx, 0);
-	connection_fdevent_set(hctx->ev_fromcgi, FDEVENT_IN);
+	hctx->ev_fromcgi = connection_fdevent_add(srv, con, hctx->fd, cgi_handle_fdevent, hctx, FDEVENT_IN);
 
 	if (0 != con->request.content_length) {
 		/* there is content to send */
@@ -806,7 +803,6 @@ static size_t mod_cgi_find_usock_info(plugin_data *p, pthread_t tid) {
 }
 
 URIHANDLER_FUNC(cgi_is_handled) {
-	fprintf(stderr, "%s\n", __func__);
 	plugin_data *p = p_d;
 	buffer *fn = con->physical.path;
 	stat_cache_entry *sce = NULL;
@@ -881,7 +877,6 @@ URIHANDLER_FUNC(cgi_is_handled) {
  * - HANDLER_WAIT_FOR_EVENT: waiting for response
  */
 SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
-	fprintf(stderr, "%s\n", __func__);
 	plugin_data *p = p_d;
 	handler_ctx *hctx = con->plugin_ctx[p->id];
 	chunkqueue *cq = con->request_content_queue;
