@@ -4,7 +4,6 @@ import sys
 from CommandService import CommandService
 def main(args):
     argle = len(args)
-    print(argle)
     command=CommandService(args[argle - 1])
     #command, env, body, socket
     if argle == 6:
