@@ -291,7 +291,6 @@ static server *server_init(void) {
 
 	srv->request_env = plugins_call_handle_request_env;
 
-	srv->handle = dp_timelog_init(",", 1024, 8192, 1);
 	return srv;
 }
 
@@ -320,8 +319,8 @@ static void server_free(server *srv) {
 	CLEAN(srvconf.bindhost);
 	CLEAN(srvconf.event_handler);
 	CLEAN(srvconf.pid_file);
-	CLEAN(srvconf.modules_dir);
-	CLEAN(srvconf.network_backend);
+//	CLEAN(srvconf.modules_dir);
+//	CLEAN(srvconf.network_backend);
 	CLEAN(srvconf.xattr_name);
 	CLEAN(srvconf.syslog_facility);
 
@@ -330,7 +329,7 @@ static void server_free(server *srv) {
 #if 0
 	fdevent_unregister(srv->ev, srv->fd);
 #endif
-	fdevent_free(srv->ev);
+//	fdevent_free(srv->ev);
 
 	if (srv->config_storage) {
 		for (i = 0; i < srv->config_context->used; i++) {
@@ -372,7 +371,6 @@ static void server_free(server *srv) {
 
 	li_rand_cleanup();
 
-	dp_timelog_exit(srv->handle);
 	free(srv);
 }
 

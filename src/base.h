@@ -583,11 +583,7 @@ struct server {
 	gid_t gid;
 	pid_t pid;
 	pthread_t tid;
-	DPTimeLog handle;
 };
-
-#include <pthread.h>
-#define ENTERLOG(srv) dp_timelog_print(srv->handle, "[%s(%s:%d)thread:%x]\n", __FUNCTION__,__FILE__,__LINE__,(unsigned int)pthread_self());
 
 typedef struct http_connection_t {
 	server * srv;
