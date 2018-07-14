@@ -319,6 +319,7 @@ static void server_free(server *srv) {
 	CLEAN(srvconf.bindhost);
 	CLEAN(srvconf.event_handler);
 	CLEAN(srvconf.pid_file);
+//	Commant out by closing bug
 //	CLEAN(srvconf.modules_dir);
 //	CLEAN(srvconf.network_backend);
 	CLEAN(srvconf.xattr_name);
@@ -329,6 +330,8 @@ static void server_free(server *srv) {
 #if 0
 	fdevent_unregister(srv->ev, srv->fd);
 #endif
+
+//Commant out by closing bug
 //	fdevent_free(srv->ev);
 
 	if (srv->config_storage) {

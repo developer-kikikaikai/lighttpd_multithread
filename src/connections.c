@@ -83,7 +83,7 @@ static void connection_handle_fdevent_set(connection *con);
 static void connection_state_machine_init(server *srv, connection *con);
 static void connection_state_machine_exit(server *srv, connection *con);
 static int connection_del(server *srv, connection *con);
-static void connection_handle_fdevent_cb(int socketfd, short eventflag, void * event_arg);
+static void connection_handle_fdevent_cb(int socketfd, int eventflag, void * event_arg);
 
 static void connection_event_init(void *handle, void *param);
 static void connection_init(server *srv, connection *con);
@@ -1253,7 +1253,7 @@ static void connection_handle_fdevent_set(connection *con) {
 
 }
 
-static void connection_handle_fdevent_cb(int socketfd, short eventflag, void * event_arg) {
+static void connection_handle_fdevent_cb(int socketfd, int eventflag, void * event_arg) {
 	server_update_cur_ts(time(NULL));
 	UNUSED(socketfd);
 	connection_request_ctx_t * req = (connection_request_ctx_t *)event_arg;
