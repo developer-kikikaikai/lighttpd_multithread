@@ -631,7 +631,7 @@ static void cgi_stop_server_command(plugin_data *p, size_t index){
 		waitpid(pid, &status, 0);
 	} else {
 		char *args[]={
-			CGI_CMD_SERVER,
+			CGI_CMD_CLIENT,
 			p->usock_info[index].idname,
 			NULL
 		};

@@ -320,8 +320,8 @@ static void server_free(server *srv) {
 	CLEAN(srvconf.event_handler);
 	CLEAN(srvconf.pid_file);
 //	Commant out by closing bug
-//	CLEAN(srvconf.modules_dir);
-//	CLEAN(srvconf.network_backend);
+	CLEAN(srvconf.modules_dir);
+	CLEAN(srvconf.network_backend);
 	CLEAN(srvconf.xattr_name);
 	CLEAN(srvconf.syslog_facility);
 
@@ -332,7 +332,7 @@ static void server_free(server *srv) {
 #endif
 
 //Commant out by closing bug
-//	fdevent_free(srv->ev);
+	fdevent_free(srv->ev);
 
 	if (srv->config_storage) {
 		for (i = 0; i < srv->config_context->used; i++) {
