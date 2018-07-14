@@ -17,8 +17,6 @@ typedef struct {
 typedef struct {
 	PLUGIN_DATA;
 
-	plugin_config **config_storage;
-
 	plugin_config conf;
 } plugin_data;
 
@@ -35,25 +33,12 @@ INIT_FUNC(mod_alias_init) {
 
 /* detroy the plugin data */
 FREE_FUNC(mod_alias_free) {
+	UNUSED(srv);
 	plugin_data *p = p_d;
 
 	if (!p) return HANDLER_GO_ON;
 
-	if (p->config_storage) {
-		size_t i;
-
-		for (i = 0; i < srv->config_context->used; i++) {
-			plugin_config *s = p->config_storage[i];
-
-			if (NULL == s) continue;
-
-			array_free(s->alias);
-
-			free(s);
-		}
-		free(p->config_storage);
-	}
-
+	array_free(p->conf.alias);
 	free(p);
 
 	return HANDLER_GO_ON;
@@ -72,86 +57,55 @@ SETDEFAULTS_FUNC(mod_alias_set_defaults) {
 
 	if (!p) return HANDLER_ERROR;
 
-	p->config_storage = calloc(1, srv->config_context->used * sizeof(plugin_config *));
+	p->conf.alias = array_init();
+	cv[0].destination = p->conf.alias;
 
+	config_values_t *cv_tmp = calloc(sizeof(cv)/sizeof(cv[0]), sizeof(config_values_t));
 	for (i = 0; i < srv->config_context->used; i++) {
 		data_config const* config = (data_config const*)srv->config_context->data[i];
-		plugin_config *s;
 
-		s = calloc(1, sizeof(plugin_config));
-		s->alias = array_init();
-		cv[0].destination = s->alias;
-
-		p->config_storage[i] = s;
-
-		if (0 != config_insert_values_global(srv, config->value, cv, i == 0 ? T_CONFIG_SCOPE_SERVER : T_CONFIG_SCOPE_CONNECTION)) {
+		if(config_patch_config(srv, config, cv, cv_tmp, i == 0 ? T_CONFIG_SCOPE_SERVER : T_CONFIG_SCOPE_CONNECTION)) {
+			free(cv_tmp);
 			return HANDLER_ERROR;
 		}
+	}
 
-		if (!array_is_kvstring(s->alias)) {
-			log_error_write(srv, __FILE__, __LINE__, "s",
-					"unexpected value for alias.url; expected list of \"urlpath\" => \"filepath\"");
-			return HANDLER_ERROR;
-		}
+	if (!array_is_kvstring(p->conf.alias)) {
+		log_error_write(srv, __FILE__, __LINE__, "s",
+				"unexpected value for alias.url; expected list of \"urlpath\" => \"filepath\"");
+		free(cv_tmp);
+		return HANDLER_ERROR;
+	}
 
-		if (s->alias->used >= 2) {
-			const array *a = s->alias;
-			size_t j, k;
+	if (p->conf.alias->used >= 2) {
+		const array *a = p->conf.alias;
+		size_t j, k;
 
-			for (j = 0; j < a->used; j ++) {
-				const buffer *prefix = a->data[a->sorted[j]]->key;
-				for (k = j + 1; k < a->used; k ++) {
-					const buffer *key = a->data[a->sorted[k]]->key;
+		for (j = 0; j < a->used; j ++) {
+			const buffer *prefix = a->data[a->sorted[j]]->key;
+			for (k = j + 1; k < a->used; k ++) {
+				const buffer *key = a->data[a->sorted[k]]->key;
 
-					if (buffer_string_length(key) < buffer_string_length(prefix)) {
-						break;
-					}
-					if (memcmp(key->ptr, prefix->ptr, buffer_string_length(prefix)) != 0) {
-						break;
-					}
-					/* ok, they have same prefix. check position */
-					if (a->sorted[j] < a->sorted[k]) {
-						log_error_write(srv, __FILE__, __LINE__, "SBSBS",
-							"url.alias: `", key, "' will never match as `", prefix, "' matched first");
-						return HANDLER_ERROR;
-					}
+				if (buffer_string_length(key) < buffer_string_length(prefix)) {
+					break;
+				}
+				if (memcmp(key->ptr, prefix->ptr, buffer_string_length(prefix)) != 0) {
+					break;
+				}
+				/* ok, they have same prefix. check position */
+				if (a->sorted[j] < a->sorted[k]) {
+					log_error_write(srv, __FILE__, __LINE__, "SBSBS",
+						"url.alias: `", key, "' will never match as `", prefix, "' matched first");
+					free(cv_tmp);
+					return HANDLER_ERROR;
 				}
 			}
 		}
 	}
 
+	free(cv_tmp);
 	return HANDLER_GO_ON;
 }
-
-#define PATCH(x) \
-	p->conf.x = s->x;
-static int mod_alias_patch_connection(server *srv, connection *con, plugin_data *p) {
-	size_t i, j;
-	plugin_config *s = p->config_storage[0];
-
-	PATCH(alias);
-
-	/* skip the first, the global context */
-	for (i = 1; i < srv->config_context->used; i++) {
-		data_config *dc = (data_config *)srv->config_context->data[i];
-		s = p->config_storage[i];
-
-		/* condition didn't match */
-		if (!config_check_cond(srv, con, dc)) continue;
-
-		/* merge config */
-		for (j = 0; j < dc->value->used; j++) {
-			data_unset *du = dc->value->data[j];
-
-			if (buffer_is_equal_string(du->key, CONST_STR_LEN("alias.url"))) {
-				PATCH(alias);
-			}
-		}
-	}
-
-	return 0;
-}
-#undef PATCH
 
 PHYSICALPATH_FUNC(mod_alias_physical_handler) {
 	plugin_data *p = p_d;
@@ -160,8 +114,6 @@ PHYSICALPATH_FUNC(mod_alias_physical_handler) {
 	size_t k;
 
 	if (buffer_is_empty(con->physical.path)) return HANDLER_GO_ON;
-
-	mod_alias_patch_connection(srv, con, p);
 
 	/* not to include the tailing slash */
 	basedir_len = buffer_string_length(con->physical.basedir);

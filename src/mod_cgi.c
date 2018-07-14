@@ -65,8 +65,6 @@ typedef struct {
 typedef struct {
 	PLUGIN_DATA;
 
-	plugin_config **config_storage;
-
 	plugin_config conf;
 
 	/*to run server*/
@@ -144,21 +142,10 @@ FREE_FUNC(mod_cgi_free) {
 
 	UNUSED(srv);
 
-	if (p->config_storage) {
-		size_t i;
-		for (i = 0; i < srv->config_context->used; i++) {
-			plugin_config *s = p->config_storage[i];
+	plugin_config *s = &p->conf;
 
-			if (NULL == s) continue;
-
-			array_free(s->cgi);
-			array_free(s->xsendfile_docroot);
-
-			free(s);
-		}
-		free(p->config_storage);
-	}
-
+	array_free(s->cgi);
+	array_free(s->xsendfile_docroot);
 
 	CGI_LOCK(p)
 	size_t i;
@@ -187,62 +174,60 @@ SETDEFAULTS_FUNC(mod_fastcgi_set_defaults) {
 
 	if (!p) return HANDLER_ERROR;
 
-	p->config_storage = calloc(1, srv->config_context->used * sizeof(plugin_config *));
-	force_assert(p->config_storage);
+	plugin_config *s = &p->conf;
+	
+	s->cgi    = array_init();
+	s->execute_x_only = 0;
+	s->local_redir    = 0;
+	s->xsendfile_allow= 0;
+	s->xsendfile_docroot = array_init();
+	s->upgrade        = 0;
+	cv[0].destination = s->cgi;
+	cv[1].destination = &(s->execute_x_only);
+	cv[2].destination = &(s->xsendfile_allow);
+	cv[3].destination = s->xsendfile_docroot;
+	cv[4].destination = &(s->local_redir);
+	cv[5].destination = &(s->upgrade);
+
+	config_values_t *cv_tmp = calloc(sizeof(cv)/sizeof(cv[0]), sizeof(config_values_t));
 
 	for (i = 0; i < srv->config_context->used; i++) {
 		data_config const* config = (data_config const*)srv->config_context->data[i];
-		plugin_config *s;
 
-		s = calloc(1, sizeof(plugin_config));
-		force_assert(s);
-
-		s->cgi    = array_init();
-		s->execute_x_only = 0;
-		s->local_redir    = 0;
-		s->xsendfile_allow= 0;
-		s->xsendfile_docroot = array_init();
-		s->upgrade        = 0;
-
-		cv[0].destination = s->cgi;
-		cv[1].destination = &(s->execute_x_only);
-		cv[2].destination = &(s->xsendfile_allow);
-		cv[3].destination = s->xsendfile_docroot;
-		cv[4].destination = &(s->local_redir);
-		cv[5].destination = &(s->upgrade);
-
-		p->config_storage[i] = s;
-
-		if (0 != config_insert_values_global(srv, config->value, cv, i == 0 ? T_CONFIG_SCOPE_SERVER : T_CONFIG_SCOPE_CONNECTION)) {
+		if(config_patch_config(srv, config, cv, cv_tmp, i == 0 ? T_CONFIG_SCOPE_SERVER : T_CONFIG_SCOPE_CONNECTION)) {
 			return HANDLER_ERROR;
-		}
-
-		if (!array_is_kvstring(s->cgi)) {
-			log_error_write(srv, __FILE__, __LINE__, "s",
-					"unexpected value for cgi.assign; expected list of \"ext\" => \"exepath\"");
-			return HANDLER_ERROR;
-		}
-
-		if (s->xsendfile_docroot->used) {
-			size_t j;
-			for (j = 0; j < s->xsendfile_docroot->used; ++j) {
-				data_string *ds = (data_string *)s->xsendfile_docroot->data[j];
-				if (ds->type != TYPE_STRING) {
-					log_error_write(srv, __FILE__, __LINE__, "s",
-						"unexpected type for key cgi.x-sendfile-docroot; expected: cgi.x-sendfile-docroot = ( \"/allowed/path\", ... )");
-					return HANDLER_ERROR;
-				}
-				if (ds->value->ptr[0] != '/') {
-					log_error_write(srv, __FILE__, __LINE__, "SBs",
-						"cgi.x-sendfile-docroot paths must begin with '/'; invalid: \"", ds->value, "\"");
-					return HANDLER_ERROR;
-				}
-				buffer_path_simplify(ds->value, ds->value);
-				buffer_append_slash(ds->value);
-			}
 		}
 	}
 
+	if (!array_is_kvstring(s->cgi)) {
+		log_error_write(srv, __FILE__, __LINE__, "s",
+				"unexpected value for cgi.assign; expected list of \"ext\" => \"exepath\"");
+		free(cv_tmp);
+		return HANDLER_ERROR;
+	}
+
+	if (s->xsendfile_docroot->used) {
+		size_t j;
+		for (j = 0; j < s->xsendfile_docroot->used; ++j) {
+			data_string *ds = (data_string *)s->xsendfile_docroot->data[j];
+			if (ds->type != TYPE_STRING) {
+				log_error_write(srv, __FILE__, __LINE__, "s",
+					"unexpected type for key cgi.x-sendfile-docroot; expected: cgi.x-sendfile-docroot = ( \"/allowed/path\", ... )");
+				free(cv_tmp);
+				return HANDLER_ERROR;
+			}
+			if (ds->value->ptr[0] != '/') {
+				log_error_write(srv, __FILE__, __LINE__, "SBs",
+					"cgi.x-sendfile-docroot paths must begin with '/'; invalid: \"", ds->value, "\"");
+				free(cv_tmp);
+				return HANDLER_ERROR;
+			}
+			buffer_path_simplify(ds->value, ds->value);
+			buffer_append_slash(ds->value);
+		}
+	}
+
+	free(cv_tmp);
 	return HANDLER_GO_ON;
 }
 
@@ -760,51 +745,6 @@ static buffer * cgi_get_handler(array *a, buffer *fn) {
 	return NULL;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
-static int mod_cgi_patch_connection(server *srv, connection *con, plugin_data *p) {
-	size_t i, j;
-	plugin_config *s = p->config_storage[0];
-
-	PATCH(cgi);
-	PATCH(execute_x_only);
-	PATCH(local_redir);
-	PATCH(upgrade);
-	PATCH(xsendfile_allow);
-	PATCH(xsendfile_docroot);
-
-	/* skip the first, the global context */
-	for (i = 1; i < srv->config_context->used; i++) {
-		data_config *dc = (data_config *)srv->config_context->data[i];
-		s = p->config_storage[i];
-
-		/* condition didn't match */
-		if (!config_check_cond(srv, con, dc)) continue;
-
-		/* merge config */
-		for (j = 0; j < dc->value->used; j++) {
-			data_unset *du = dc->value->data[j];
-
-			if (buffer_is_equal_string(du->key, CONST_STR_LEN("cgi.assign"))) {
-				PATCH(cgi);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("cgi.execute-x-only"))) {
-				PATCH(execute_x_only);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("cgi.local-redir"))) {
-				PATCH(local_redir);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("cgi.upgrade"))) {
-				PATCH(upgrade);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("cgi.x-sendfile"))) {
-				PATCH(xsendfile_allow);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("cgi.x-sendfile-docroot"))) {
-				PATCH(xsendfile_docroot);
-			}
-		}
-	}
-
-	return 0;
-}
-#undef PATCH
-
 static size_t mod_cgi_find_usock_info(plugin_data *p, pthread_t tid) {
 	size_t i;
 	for(i = 0;i < p->usock_num; i ++) {
@@ -826,8 +766,6 @@ URIHANDLER_FUNC(cgi_is_handled) {
 	if (con->mode != DIRECT) return HANDLER_GO_ON;
 
 	if (buffer_is_empty(fn)) return HANDLER_GO_ON;
-
-	mod_cgi_patch_connection(srv, con, p);
 
 	if (HANDLER_ERROR != stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
 		st = &sce->st;

@@ -95,4 +95,5 @@ int config_insert_values_global(server *srv, array *ca, const config_values_t *c
 int config_insert_values_internal(server *srv, array *ca, const config_values_t *cv, config_scope_type_t scope);
 int config_check_cond(server *srv, connection *con, data_config *dc);
 
+int config_patch_config(server *srv, data_config const* dc, config_values_t *cv, config_values_t *cv_tmp, config_scope_type_t scope);
 #endif
