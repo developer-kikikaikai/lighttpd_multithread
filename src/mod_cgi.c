@@ -31,6 +31,10 @@
 #define CGI_USOCK_BASENAME "/tmp/cgi_sock_"
 #define CGI_BODYFILE_MODE (S_IRUSR|S_IWUSR)|(S_IRGRP|S_IWGRP)|(S_IROTH|S_IWOTH)
 
+#define CGIPATH_LEN (256)
+#define USOCK_LEN (16)
+#define ENV_STRING (1024)
+
 typedef struct {
 	char **ptr;
 
@@ -67,9 +71,9 @@ typedef struct {
 
 	/*to run server*/
 	pthread_mutex_t lock;
-	char cgipath[256];
+	char *cgipath;
 	size_t usock_num;
-	cgi_usock_info_t usock_info[16];
+	cgi_usock_info_t *usock_info;
 } plugin_data;
 
 #define CGI_LOCK(hctx) pthread_mutex_lock(&hctx->lock);
@@ -85,10 +89,10 @@ typedef struct {
 	buffer *cgi_handler;      /* dumb pointer */
 	http_response_opts opts;
 	int bodyfd;
-	char basecmd[256];
-	char env_string[1024];
-	char body_file[UNIX_PATH_MAX];
-	char usock_name[UNIX_PATH_MAX];
+	char *basecmd;
+	char *env_string;
+	char *body_file;
+	char *usock_name;
 	plugin_config conf;
 } handler_ctx;
 
@@ -98,12 +102,18 @@ static void cgi_stop_server_command(plugin_data *p, size_t index);
 static size_t mod_cgi_find_usock_info(plugin_data *p, pthread_t tid);
 
 static handler_ctx * cgi_handler_ctx_init(void) {
-	handler_ctx *hctx = calloc(1, sizeof(*hctx));
+	handler_ctx *hctx = malloc(sizeof(*hctx) + CGIPATH_LEN + ENV_STRING + UNIX_PATH_MAX + UNIX_PATH_MAX);
 
 	force_assert(hctx);
 
+	memset(hctx, 0, sizeof(*hctx) + CGIPATH_LEN + ENV_STRING + UNIX_PATH_MAX + UNIX_PATH_MAX);
 	hctx->response = buffer_init();
 	hctx->fd = -1;
+
+	hctx->basecmd = (char *)(hctx + 1);
+	hctx->env_string = (hctx->basecmd + CGIPATH_LEN);
+	hctx->body_file = (hctx->env_string + ENV_STRING);
+	hctx->usock_name = (hctx->body_file + UNIX_PATH_MAX);
 
 	return hctx;
 }
@@ -117,10 +127,13 @@ static void cgi_handler_ctx_free(handler_ctx *hctx) {
 INIT_FUNC(mod_cgi_init) {
 	plugin_data *p;
 
-	p = calloc(1, sizeof(*p));
+	p = malloc(sizeof(*p) + CGIPATH_LEN + sizeof(cgi_usock_info_t)*USOCK_LEN);
 
 	force_assert(p);
+	memset(p, 0, sizeof(*p) + CGIPATH_LEN + sizeof(cgi_usock_info_t)*USOCK_LEN);
 
+	p->cgipath = (char *)(p + 1);
+	p->usock_info = (cgi_usock_info_t *)(p->cgipath + CGIPATH_LEN);
 	pthread_mutex_init(&p->lock, NULL);
 	return p;
 }
@@ -566,16 +579,16 @@ static void cgi_create_usock_env(handler_ctx *hctx, char_array *envs) {
 	size_t i = 0;
 	size_t length = 0;
 	for( i = 0; i < envs->used && envs->ptr[i]; i ++ ) {
-		length += snprintf(&hctx->env_string[length], sizeof(hctx->env_string) - length, "%s ", envs->ptr[i]);
+		length += snprintf(&hctx->env_string[length], ENV_STRING - length, "%s ", envs->ptr[i]);
 		if(strstr(envs->ptr[i], "DOCUMENT_ROOT")==envs->ptr[i]) {
 		}
 	}
 
 	/*set body file name*/
-	snprintf(hctx->body_file, sizeof(hctx->usock_name), "%s%u_%09ld_body.txt", CGI_USOCK_BASENAME, (unsigned int)ts.tv_sec, ts.tv_nsec);
+	snprintf(hctx->body_file, UNIX_PATH_MAX, "%s%u_%09ld_body.txt", CGI_USOCK_BASENAME, (unsigned int)ts.tv_sec, ts.tv_nsec);
 
 	/*set socket file name*/
-	snprintf(hctx->usock_name, sizeof(hctx->usock_name), "%s%u_%09ld.sock", CGI_USOCK_BASENAME, (unsigned int)ts.tv_sec, ts.tv_nsec);
+	snprintf(hctx->usock_name, UNIX_PATH_MAX, "%s%u_%09ld.sock", CGI_USOCK_BASENAME, (unsigned int)ts.tv_sec, ts.tv_nsec);
 }
 
 static void cgi_open_resp_sock(handler_ctx *hctx) {
@@ -616,7 +629,7 @@ static void cgi_start_server_command(plugin_data *p, size_t index) {
 	if(pid != 0) {
 		usleep(100000);
 	} else {
-		chdir(p->cgipath); 
+		(void)chdir(p->cgipath); 
 		char *args[]={
 			CGI_CMD_SERVER,
 			p->usock_info[index].idname,
@@ -692,9 +705,9 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, handler_
 		/* set up args */
 		size_t length = 0;
 		if (!buffer_string_is_empty(cgi_handler)) {
-			length += snprintf(&hctx->basecmd[length], length - sizeof(hctx->basecmd), "%s ", cgi_handler->ptr);
+			length += snprintf(&hctx->basecmd[length], CGIPATH_LEN - length, "%s ", cgi_handler->ptr);
 		}
-		snprintf(&hctx->basecmd[length], length - sizeof(hctx->basecmd), "%s", con->physical.path->ptr);
+		snprintf(&hctx->basecmd[length], CGIPATH_LEN - length, "%s", con->physical.path->ptr);
 
 		/* setup args of */
 		cgi_create_usock_env(hctx, &env);
