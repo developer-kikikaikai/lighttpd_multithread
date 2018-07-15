@@ -298,7 +298,7 @@ static handler_t cgi_response_headers(server *srv, connection *con, struct http_
 
 
 static int cgi_recv_response(server *srv, connection * con, handler_ctx *hctx) {
-		int ret = http_response_read(srv, con, &hctx->opts,hctx->response, hctx->fd, hctx->ev_fromcgi);
+		int ret = http_response_read(srv, con, &hctx->opts, hctx->response, hctx->fd, hctx->ev_fromcgi);
 		switch (ret) {
 		default:
 			if(con->response.transfer_encoding & ~HTTP_TRANSFER_ENCODING_CHUNKED && con->file_finished != 1) {
@@ -587,6 +587,8 @@ static void cgi_open_resp_sock(handler_ctx *hctx) {
 		force_assert(0);
 	}
 	hctx->fd = fd;
+	/*set non block*/
+	fcntl(fd, F_SETFL, O_NONBLOCK | O_RDWR);
 }
 
 static void cgi_send_command(handler_ctx *hctx) {
