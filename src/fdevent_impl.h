@@ -93,7 +93,7 @@ struct fdevent_callback_t {
     int (*event_next_fdndx)(struct fdevents *ev, int ndx);
     int (*poll)(struct fdevents *ev, int timeout_ms);
 };
-typedef struct fdevent_callback_t fdevent_callback_t, *FDEventCallbask;
+typedef struct fdevent_callback_t fdevent_callback_t, *FDEventCallback;
 
 struct fdevents {
     struct server *srv;
@@ -153,6 +153,6 @@ int fdevent_solaris_port_init(struct fdevents *ev);
 int fdevent_freebsd_kqueue_init(struct fdevents *ev);
 int fdevent_libev_init(struct fdevents *ev);
 
-FDEventCallbask fdevent_get(void);
-void fdevent_set(FDEventCallbask callback);
+FDEventCallback fdevent_get(void);
+void fdevent_set(FDEventCallback callback);
 #endif

@@ -85,27 +85,40 @@ typedef struct {
 
 static void data_auth_free(data_unset *d)
 {
+    data_type_free(TYPE_AUTH, d);
+}
+
+static void data_auth_clone_free(void *d) {
     data_auth * const dauth = (data_auth *)d;
     buffer_free(dauth->key);
     http_auth_require_free(dauth->require);
     free(dauth);
 }
 
+static void * data_auth_clone(void *base, size_t base_len) {
+	UNUSED(base);
+	data_auth * const dauth = calloc(1, base_len);
+	dauth->key = buffer_init();
+	dauth->require = http_auth_require_init();
+	return dauth;
+}
+
+static void data_auth_get_register(data_unset_register_data_t *data) {
+    data->prime.copy       = NULL; /* must not be called on this data */
+    data->prime.free       = data_auth_free;
+    data->prime.reset      = NULL; /* must not be called on this data */
+    data->prime.insert_dup = NULL; /* must not be called on this data */
+    data->prime.print      = NULL; /* must not be called on this data */
+    data->prime.type       = TYPE_AUTH;
+
+    data->size  = sizeof(data_auth);
+    data->clone = data_auth_clone;
+    data->free  = data_auth_clone_free;
+}
+
 static data_auth *data_auth_init(void)
 {
-    data_auth * const dauth = calloc(1, sizeof(*dauth));
-    force_assert(NULL != dauth);
-    dauth->copy       = NULL; /* must not be called on this data */
-    dauth->free       = data_auth_free;
-    dauth->reset      = NULL; /* must not be called on this data */
-    dauth->insert_dup = NULL; /* must not be called on this data */
-    dauth->print      = NULL; /* must not be called on this data */
-    dauth->type       = TYPE_OTHER;
-
-    dauth->key = buffer_init();
-    dauth->require = http_auth_require_init();
-
-    return dauth;
+    return (data_auth *)data_type_get(TYPE_AUTH);
 }
 
 static int mod_auth_require_parse (server *srv, http_auth_require_t * const require, const buffer *b)
@@ -328,7 +341,7 @@ SETDEFAULTS_FUNC(mod_auth_set_defaults) {
 				dauth->require->scheme = auth_scheme;
 				buffer_copy_buffer(dauth->require->realm, realm);
 				if (!mod_auth_require_parse(srv, dauth->require, require)) {
-					dauth->free((data_unset *)dauth);
+					data_type_get_method(TYPE_AUTH)->free((data_unset *)dauth);
 					return HANDLER_ERROR;
 				}
 				array_insert_unique(s->auth_require, (data_unset *)dauth);
@@ -421,6 +434,9 @@ int mod_auth_plugin_init(plugin *p) {
 
 	p->data        = NULL;
 
+	data_unset_register_data_t data;
+	data_auth_get_register(&data);
+	data_type_get_register(TYPE_AUTH, &data);
 	return 0;
 }
 

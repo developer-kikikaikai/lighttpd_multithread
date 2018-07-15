@@ -1062,7 +1062,7 @@ int http_request_parse(server *srv, connection *con) {
 							} else if (cmp > 0 && 0 == (cmp = buffer_caseless_compare(CONST_BUF_LEN(ds->key), CONST_STR_LEN("Host")))) {
 								if (reqline_host) {
 									/* ignore all host: headers as we got the host in the request line */
-									ds->free((data_unset*) ds);
+									data_type_get_method(ds->type)->free((data_unset*) ds);
 									ds = NULL;
 								} else if (!con->request.http_host) {
 									con->request.http_host = ds->value;
@@ -1090,7 +1090,7 @@ int http_request_parse(server *srv, connection *con) {
 											ds->value->ptr)) {
 									/* ignore it if they are the same */
 
-									ds->free((data_unset *)ds);
+									data_type_get_method(ds->type)->free((data_unset *)ds);
 									ds = NULL;
 								} else {
 									con->http_status = 400;
@@ -1111,7 +1111,7 @@ int http_request_parse(server *srv, connection *con) {
 								if (!con->request.http_if_none_match) {
 									con->request.http_if_none_match = ds->value->ptr;
 								} else {
-									ds->free((data_unset*) ds);
+									data_type_get_method(ds->type)->free((data_unset*) ds);
 									ds = NULL;
 								}
 							} else if (cmp > 0 && 0 == (cmp = buffer_caseless_compare(CONST_BUF_LEN(ds->key), CONST_STR_LEN("Range")))) {

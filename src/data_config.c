@@ -20,23 +20,7 @@ static data_unset *data_config_copy(const data_unset *s) {
 }
 
 static void data_config_free(data_unset *d) {
-	data_config *ds = (data_config *)d;
-
-	buffer_free(ds->key);
-	buffer_free(ds->op);
-	buffer_free(ds->comp_tag);
-	buffer_free(ds->comp_key);
-
-	array_free(ds->value);
-	vector_config_weak_clear(&ds->children);
-
-	if (ds->string) buffer_free(ds->string);
-#ifdef HAVE_PCRE_H
-	if (ds->regex) pcre_free(ds->regex);
-	if (ds->regex_study) pcre_free(ds->regex_study);
-#endif
-
-	free(d);
+	data_type_free(TYPE_CONFIG, d);
 }
 
 static void data_config_reset(data_unset *d) {
@@ -52,7 +36,7 @@ static void data_config_reset(data_unset *d) {
 static int data_config_insert_dup(data_unset *dst, data_unset *src) {
 	UNUSED(dst);
 
-	src->free(src);
+	data_type_get_method(TYPE_CONFIG)->free(src);
 
 	return 0;
 }
@@ -90,7 +74,7 @@ static void data_config_print(const data_unset *d, int depth) {
 			fprintf(stdout, " ");
 		}
 		fprintf(stdout, " = ");
-		du->print(du, depth);
+		data_type_get_method(du->type)->print(du, depth);
 		fprintf(stdout, "\n");
 	}
 
@@ -102,7 +86,7 @@ static void data_config_print(const data_unset *d, int depth) {
 		if (NULL == dc->prev) {
 			fprintf(stdout, "\n");
 			array_print_indent(depth);
-			dc->print((data_unset *) dc, depth);
+			data_type_get_method(dc->type)->print((data_unset *) dc, depth);
 			fprintf(stdout, "\n");
 		}
 	}
@@ -123,15 +107,15 @@ static void data_config_print(const data_unset *d, int depth) {
 		fprintf(stdout, "\n");
 		array_print_indent(depth);
 		fprintf(stdout, "else ");
-		ds->next->print((data_unset *)ds->next, depth);
+		data_type_get_method(ds->next->type)->print((data_unset *)ds->next, depth);
 	}
 }
 
-data_config *data_config_init(void) {
-	data_config *ds;
+static void *data_config_clone(void *base, size_t base_length) {
+	UNUSED(base);
+	data_config *ds = calloc(1, base_length);
 
-	ds = calloc(1, sizeof(*ds));
-
+	ds->type = TYPE_CONFIG;
 	ds->key = buffer_init();
 	ds->op = buffer_init();
 	ds->comp_tag = buffer_init();
@@ -139,12 +123,43 @@ data_config *data_config_init(void) {
 	ds->value = array_init();
 	vector_config_weak_init(&ds->children);
 
-	ds->copy = data_config_copy;
-	ds->free = data_config_free;
-	ds->reset = data_config_reset;
-	ds->insert_dup = data_config_insert_dup;
-	ds->print = data_config_print;
-	ds->type = TYPE_CONFIG;
-
 	return ds;
+}
+
+static void data_config_clone_free(void *d) {
+	data_config *ds = (data_config *)d;
+
+	buffer_free(ds->key);
+	buffer_free(ds->op);
+	buffer_free(ds->comp_tag);
+	buffer_free(ds->comp_key);
+
+	array_free(ds->value);
+	vector_config_weak_clear(&ds->children);
+
+	if (ds->string) buffer_free(ds->string);
+#ifdef HAVE_PCRE_H
+	if (ds->regex) pcre_free(ds->regex);
+	if (ds->regex_study) pcre_free(ds->regex_study);
+#endif
+
+	free(d);
+}
+
+void data_config_get_register(data_unset_register_data_t *data) {
+	fprintf(stderr, "%s\n", __func__);
+	data->prime.copy = data_config_copy;
+	data->prime.free = data_config_free;
+	data->prime.reset = data_config_reset;
+	data->prime.insert_dup = data_config_insert_dup;
+	data->prime.print = data_config_print;
+	data->prime.type = TYPE_CONFIG;
+	data->size = sizeof(data_config);
+
+	data->clone = data_config_clone;
+	data->free = data_config_clone_free;
+}
+
+data_config *data_config_init(void) {
+	return (data_config *)data_type_get(TYPE_CONFIG);
 }

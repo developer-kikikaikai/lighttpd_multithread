@@ -451,7 +451,7 @@ static int config_insert(server *srv) {
 
 			for (i = 0; i < srv->srvconf.modules->used; i++) {
 				data_unset *du = srv->srvconf.modules->data[i];
-				array_insert_unique(modules, du->copy(du));
+				array_insert_unique(modules, data_type_get_method(du->type)->copy(du));
 			}
 
 			array_free(srv->srvconf.modules);
@@ -1343,7 +1343,7 @@ int config_read(server *srv, const char *fn) {
 		buffer_copy_string_len(dcwd->key, CONST_STR_LEN("var.CWD"));
 		array_insert_unique(dc->value, (data_unset *)dcwd);
 	} else {
-		dcwd->free((data_unset*) dcwd);
+		data_type_get_method(dcwd->type)->free((data_unset*) dcwd);
 	}
 
 	filename = buffer_init_string(fn);

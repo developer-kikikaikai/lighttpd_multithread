@@ -10,6 +10,8 @@
 
 #include <errno.h>
 #include <assert.h>
+#include "flyweight.h"
+#include "prototype.h"
 
 #define ARRAY_NOT_FOUND ((size_t)(-1))
 
@@ -35,7 +37,7 @@ array *array_init_array(array *src) {
 	a->data = malloc(sizeof(*src->data) * src->size);
 	force_assert(NULL != a->data);
 	for (i = 0; i < src->size; i++) {
-		if (src->data[i]) a->data[i] = src->data[i]->copy(src->data[i]);
+		if (src->data[i]) a->data[i] = data_type_get_method(src->data[i]->type)->copy(src->data[i]);
 		else a->data[i] = NULL;
 	}
 
@@ -50,7 +52,7 @@ void array_free(array *a) {
 	if (!a) return;
 
 	for (i = 0; i < a->size; i++) {
-		if (a->data[i]) a->data[i]->free(a->data[i]);
+		if (a->data[i]) data_type_get_method(a->data[i]->type)->free(a->data[i]);
 	}
 
 	if (a->data) free(a->data);
@@ -64,7 +66,7 @@ void array_reset(array *a) {
 	if (!a) return;
 
 	for (i = 0; i < a->used; i++) {
-		a->data[i]->reset(a->data[i]);
+		data_type_get_method(a->data[i]->type)->reset(a->data[i]);
 	}
 
 	a->used = 0;
@@ -248,7 +250,7 @@ static data_unset **array_find_or_insert(array *a, data_unset *entry) {
 	ndx = a->used;
 
 	/* make sure there is nothing here */
-	if (a->data[ndx]) a->data[ndx]->free(a->data[ndx]);
+	if (a->data[ndx]) data_type_get_method(a->data[ndx]->type)->free(a->data[ndx]);
 
 	a->data[a->used++] = entry;
 
@@ -270,7 +272,7 @@ void array_replace(array *a, data_unset *entry) {
 	force_assert(NULL != entry);
 	if (NULL != (old = array_find_or_insert(a, entry))) {
 		force_assert(*old != entry);
-		(*old)->free(*old);
+		data_type_get_method((*old)->type)->free(*old);
 		*old = entry;
 	}
 }
@@ -281,7 +283,7 @@ void array_insert_unique(array *a, data_unset *entry) {
 	force_assert(NULL != entry);
 	if (NULL != (old = array_find_or_insert(a, entry))) {
 		force_assert((*old)->type == entry->type);
-		entry->insert_dup(*old, entry);
+		data_type_get_method(entry->type)->insert_dup(*old, entry);
 	}
 }
 
@@ -369,7 +371,7 @@ int array_print(array *a, int depth) {
 			if (i != 0) {
 				fprintf(stdout, ", ");
 			}
-			du->print(du, depth + 1);
+			data_type_get_method(du->type)->print(du, depth + 1);
 		}
 		fprintf(stdout, ")");
 		return 0;
@@ -393,7 +395,7 @@ int array_print(array *a, int depth) {
 			}
 			fprintf(stdout, " => ");
 		}
-		du->print(du, depth + 1);
+		data_type_get_method(du->type)->print(du, depth + 1);
 		fprintf(stdout, ",\n");
 	}
 	if (!(i && (i - 1 % 5) == 0)) {
@@ -404,6 +406,82 @@ int array_print(array *a, int depth) {
 	fprintf(stdout, ")");
 
 	return 0;
+}
+
+int data_unset_prime_equall(void *this, size_t size, void *input_parameter) {
+	UNUSED(size);
+	return ((data_unset *)this)->type == ((data_unset *)input_parameter)->type;
+}
+
+/*unset prime data*/
+static struct {
+	PrototypeManager proto_manager;
+	PrototypeFactory proto_factory[TYPE_SIZEOF];
+	FlyweightFactory prime_factory;
+} data_type_mng_g;
+
+static void prototype_default_free_base(void * base) {
+}
+
+void data_type_get_register(int type, data_unset_register_data_t *data) {
+	prototype_factory_method_t prot_method={NULL, NULL, prototype_default_free_base};
+	//set prototope
+	prot_method.clone = data->clone;
+	prot_method.free = data->free;
+	data_type_mng_g.proto_factory[type] = prototype_register(data_type_mng_g.proto_manager, &data_type_mng_g.proto_factory[type]/*dummy*/, data->size, &prot_method);
+	force_assert(data_type_mng_g.proto_factory[type]);
+
+	/*to register func, call flyweight_get*/
+	data_unset_prime * prime_data = flyweight_get(data_type_mng_g.prime_factory, &data->prime);
+	force_assert(prime_data);
+	memcpy(prime_data, &data->prime, sizeof(*prime_data));
+}
+
+void data_type_register_all(void) {
+
+	void (*data_register[TYPE_SIZEOF])(data_unset_register_data_t *data) = {
+		NULL,
+		data_string_get_register,
+		data_response_get_register,
+		NULL,
+		data_array_get_register,
+		data_integer_get_register,
+		data_config_get_register
+	};
+
+	flyweight_methods_t flyweight_method ={NULL, data_unset_prime_equall, NULL, NULL};
+	//create manager, prime factory first
+	data_type_mng_g.proto_manager = prototype_manager_new(0);
+	force_assert(data_type_mng_g.proto_manager);
+
+	data_type_mng_g.prime_factory = flyweight_factory_new(sizeof(data_unset_prime), 0, &flyweight_method);
+	force_assert(data_type_mng_g.prime_factory);
+
+	size_t i;
+	data_unset_register_data_t reg_data;
+	for( i = TYPE_UNSET+1; i < TYPE_SIZEOF ; i ++ ) {
+		if(!data_register[i]) continue;
+		data_register[i](&reg_data);
+		data_type_get_register(i, &reg_data);
+	}
+}
+
+data_unset * data_type_get(int type) {
+	return (data_unset *) prototype_clone(data_type_mng_g.proto_factory[type]);
+}
+
+void data_type_free(int type, data_unset * cloned_data) {
+	prototype_free(data_type_mng_g.proto_factory[type], cloned_data);
+}
+
+data_unset_prime * data_type_get_method(int type) {
+	data_unset data={type, 0, 0};
+	return (data_unset_prime *)flyweight_get(data_type_mng_g.prime_factory, &data);
+}
+
+void data_type_unregister_all(void) {
+	flyweight_factory_free(data_type_mng_g.prime_factory);
+	prototype_manager_free(data_type_mng_g.proto_manager);
 }
 
 #ifdef DEBUG_ARRAY

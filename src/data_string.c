@@ -17,12 +17,7 @@ static data_unset *data_string_copy(const data_unset *s) {
 }
 
 static void data_string_free(data_unset *d) {
-	data_string *ds = (data_string *)d;
-
-	buffer_free(ds->key);
-	buffer_free(ds->value);
-
-	free(d);
+	data_type_free(TYPE_STRING, d);
 }
 
 static void data_string_reset(data_unset *d) {
@@ -44,7 +39,7 @@ static int data_string_insert_dup(data_unset *dst, data_unset *src) {
 		buffer_copy_buffer(ds_dst->value, ds_src->value);
 	}
 
-	src->free(src);
+	data_type_get_method(src->type)->free(src);
 
 	return 0;
 }
@@ -62,7 +57,7 @@ static int data_response_insert_dup(data_unset *dst, data_unset *src) {
 		buffer_copy_buffer(ds_dst->value, ds_src->value);
 	}
 
-	src->free(src);
+	data_type_get_method(src->type)->free(src);
 
 	return 0;
 }
@@ -93,31 +88,65 @@ static void data_string_print(const data_unset *d, int depth) {
 	putc('"', stdout);
 }
 
-
-data_string *data_string_init(void) {
-	data_string *ds;
-
-	ds = calloc(1, sizeof(*ds));
+static void * data_string_clone(void *base, size_t base_len) {
+	data_string *ds = calloc(1, base_len);
 	force_assert(NULL != ds);
 
+	ds->type = TYPE_STRING;
 	ds->key = buffer_init();
 	ds->value = buffer_init();
-
-	ds->copy = data_string_copy;
-	ds->free = data_string_free;
-	ds->reset = data_string_reset;
-	ds->insert_dup = data_string_insert_dup;
-	ds->print = data_string_print;
-	ds->type = TYPE_STRING;
-
 	return ds;
 }
 
-data_string *data_response_init(void) {
-	data_string *ds;
+static void * data_response_clone(void *base, size_t base_len) {
+	data_string *ds = calloc(1, base_len);
+	force_assert(NULL != ds);
 
-	ds = data_string_init();
-	ds->insert_dup = data_response_insert_dup;
-
+	ds->type = TYPE_RESPONSE;
+	ds->key = buffer_init();
+	ds->value = buffer_init();
 	return ds;
+}
+
+static void data_string_clone_free(void *d) {
+	data_string *ds = (data_string *)d;
+
+	buffer_free(ds->key);
+	buffer_free(ds->value);
+
+	free(d);
+}
+
+void data_string_get_register(data_unset_register_data_t *data) {
+	data->prime.copy = data_string_copy;
+	data->prime.free = data_string_free;
+	data->prime.reset = data_string_reset;
+	data->prime.insert_dup = data_string_insert_dup;
+	data->prime.print = data_string_print;
+	data->prime.type = TYPE_STRING;
+
+	data->size = sizeof(data_string);
+	data->clone = data_string_clone;
+	data->free = data_string_clone_free;
+}
+
+void data_response_get_register(data_unset_register_data_t *data) {
+	data->prime.copy = data_string_copy;
+	data->prime.free = data_string_free;
+	data->prime.reset = data_string_reset;
+	data->prime.insert_dup = data_response_insert_dup;
+	data->prime.print = data_string_print;
+	data->prime.type = TYPE_RESPONSE;
+
+	data->size = sizeof(data_string);
+	data->clone = data_response_clone;
+	data->free = data_string_clone_free;
+}
+
+data_string *data_string_init(void) {
+	return (data_string *)data_type_get(TYPE_STRING);
+}
+
+data_string *data_response_init(void) {
+	return (data_string *)data_type_get(TYPE_RESPONSE);
 }

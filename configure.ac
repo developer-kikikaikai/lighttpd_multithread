@@ -1224,6 +1224,8 @@ AC_SEARCH_LIBS([event_tpool_manager_new], [event_threadpool])
 AC_SEARCH_LIBS([state_machine_new], [state_machine])
 AC_SEARCH_LIBS([mpool_create], [memorypool])
 AC_SEARCH_LIBS([dp_timelog_init], [dputil])
+AC_SEARCH_LIBS([flyweight_factory_new], [flyweight])
+AC_SEARCH_LIBS([prototype_manager_new], [prototype])
 
 dnl Check for dpfc
 AC_MSG_NOTICE([----------------------------------------])

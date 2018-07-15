@@ -18,12 +18,7 @@ static data_unset *data_array_copy(const data_unset *s) {
 }
 
 static void data_array_free(data_unset *d) {
-	data_array *ds = (data_array *)d;
-
-	buffer_free(ds->key);
-	array_free(ds->value);
-
-	free(d);
+	data_type_free(TYPE_ARRAY, d);
 }
 
 static void data_array_reset(data_unset *d) {
@@ -37,7 +32,7 @@ static void data_array_reset(data_unset *d) {
 static int data_array_insert_dup(data_unset *dst, data_unset *src) {
 	UNUSED(dst);
 
-	src->free(src);
+	data_type_get_method(src->type)->free(src);
 
 	return 0;
 }
@@ -48,21 +43,39 @@ static void data_array_print(const data_unset *d, int depth) {
 	array_print(ds->value, depth);
 }
 
-data_array *data_array_init(void) {
-	data_array *ds;
+static void data_array_clone_free(void *clone_data) {
+	data_array *ds = (data_array *)clone_data;
 
-	ds = calloc(1, sizeof(*ds));
+	buffer_free(ds->key);
+	array_free(ds->value);
+
+	free(clone_data);
+}
+
+static void *data_array_clone(void *base, size_t base_length) {
+	UNUSED(base);
+	data_array *ds = calloc(1, base_length);
 	force_assert(NULL != ds);
 
+	ds->type = TYPE_ARRAY;
 	ds->key = buffer_init();
 	ds->value = array_init();
-
-	ds->copy = data_array_copy;
-	ds->free = data_array_free;
-	ds->reset = data_array_reset;
-	ds->insert_dup = data_array_insert_dup;
-	ds->print = data_array_print;
-	ds->type = TYPE_ARRAY;
-
 	return ds;
+}
+
+void data_array_get_register(data_unset_register_data_t *data) {
+	data->prime.copy = data_array_copy;
+	data->prime.free = data_array_free;
+	data->prime.reset = data_array_reset;
+	data->prime.insert_dup = data_array_insert_dup;
+	data->prime.print = data_array_print;
+	data->prime.type = TYPE_ARRAY;
+	data->size = sizeof(data_array);
+
+	data->clone = data_array_clone;
+	data->free = data_array_clone_free;
+}
+
+data_array *data_array_init(void) {
+	return (data_array *)data_type_get(TYPE_ARRAY);
 }

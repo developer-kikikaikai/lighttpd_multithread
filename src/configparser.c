@@ -54,7 +54,7 @@ static data_unset *configparser_get_variable(config_t *ctx, const buffer *key) {
     array_print(dc->value, 0);
 #endif
     if (NULL != (du = array_get_element_klen(dc->value, CONST_BUF_LEN(key)))) {
-      du = du->copy(du);
+      du = data_type_get_method(du->type)->copy(du);
       buffer_reset(du->key);
       return du;
     }
@@ -76,11 +76,11 @@ data_unset *configparser_merge_data(data_unset *op1, const data_unset *op2) {
       data_string *ds = data_string_init();
       buffer_append_int(ds->value, ((data_integer*)op1)->value);
       buffer_append_string_buffer(ds->value, ((data_string*)op2)->value);
-      op1->free(op1);
+      data_type_get_method(op1->type)->free(op1);
       return (data_unset *)ds;
     } else {
       fprintf(stderr, "data type mismatch, cannot merge\n");
-      op1->free(op1);
+      data_type_get_method(op1->type)->free(op1);
       return NULL;
     }
   }
@@ -102,10 +102,10 @@ data_unset *configparser_merge_data(data_unset *op1, const data_unset *op2) {
         du = (data_unset *)src->data[i];
         if (du) {
           if (du->is_index_key || buffer_is_empty(du->key) || !array_get_element_klen(dst, CONST_BUF_LEN(du->key))) {
-            array_insert_unique(dst, du->copy(du));
+            array_insert_unique(dst, data_type_get_method(du->type)->copy(du));
           } else {
             fprintf(stderr, "Duplicate array-key '%s'\n", du->key->ptr);
-            op1->free(op1);
+            data_type_get_method(op1->type)->free(op1);
             return NULL;
           }
         }
@@ -573,17 +573,17 @@ static void yy_destructor(YYCODETYPE yymajor, YYMINORTYPE *yypminor){
       break;
     case 36:
 #line 175 "./configparser.y"
-{ if ((yypminor->yy91)) (yypminor->yy91)->free((yypminor->yy91)); }
+{ if ((yypminor->yy91)) data_type_get_method((yypminor->yy91)->type)->free((yypminor->yy91)); }
 #line 577 "./configparser.c"
       break;
     case 37:
 #line 176 "./configparser.y"
-{ if ((yypminor->yy91)) (yypminor->yy91)->free((yypminor->yy91)); }
+{ if ((yypminor->yy91)) data_type_get_method((yypminor->yy91)->type)->free((yypminor->yy91)); }
 #line 582 "./configparser.c"
       break;
     case 38:
 #line 177 "./configparser.y"
-{ if ((yypminor->yy91)) (yypminor->yy91)->free((yypminor->yy91)); }
+{ if ((yypminor->yy91)) data_type_get_method((yypminor->yy91)->type)->free((yypminor->yy91)); }
 #line 587 "./configparser.c"
       break;
     case 41:
@@ -917,7 +917,7 @@ static void yy_reduce(
   }
   buffer_free(yymsp[-2].minor.yy29);
   yymsp[-2].minor.yy29 = NULL;
-  if (yymsp[0].minor.yy91) yymsp[0].minor.yy91->free(yymsp[0].minor.yy91);
+  if (yymsp[0].minor.yy91) data_type_get_method(yymsp[0].minor.yy91->type)->free(yymsp[0].minor.yy91);
   yymsp[0].minor.yy91 = NULL;
 }
 #line 923 "./configparser.c"
@@ -940,7 +940,7 @@ static void yy_reduce(
   }
   buffer_free(yymsp[-2].minor.yy29);
   yymsp[-2].minor.yy29 = NULL;
-  if (yymsp[0].minor.yy91) yymsp[0].minor.yy91->free(yymsp[0].minor.yy91);
+  if (yymsp[0].minor.yy91) data_type_get_method(yymsp[0].minor.yy91->type)->free(yymsp[0].minor.yy91);
   yymsp[0].minor.yy91 = NULL;
 }
 #line 946 "./configparser.c"
@@ -975,7 +975,7 @@ static void yy_reduce(
   }
   buffer_free(yymsp[-2].minor.yy29);
   yymsp[-2].minor.yy29 = NULL;
-  if (yymsp[0].minor.yy91) yymsp[0].minor.yy91->free(yymsp[0].minor.yy91);
+  if (yymsp[0].minor.yy91) data_type_get_method(yymsp[0].minor.yy91->type)->free(yymsp[0].minor.yy91);
   yymsp[0].minor.yy91 = NULL;
 }
 #line 981 "./configparser.c"
@@ -1007,9 +1007,9 @@ static void yy_reduce(
       ctx->ok = 0;
     }
   }
-  if (yymsp[-2].minor.yy91) yymsp[-2].minor.yy91->free(yymsp[-2].minor.yy91);
+  if (yymsp[-2].minor.yy91) data_type_get_method(yymsp[-2].minor.yy91->type)->free(yymsp[-2].minor.yy91);
   yymsp[-2].minor.yy91 = NULL;
-  if (yymsp[0].minor.yy91) yymsp[0].minor.yy91->free(yymsp[0].minor.yy91);
+  if (yymsp[0].minor.yy91) data_type_get_method(yymsp[0].minor.yy91->type)->free(yymsp[0].minor.yy91);
   yymsp[0].minor.yy91 = NULL;
 }
 #line 1015 "./configparser.c"
@@ -1128,7 +1128,7 @@ static void yy_reduce(
   }
   array_free(yymsp[-2].minor.yy42);
   yymsp[-2].minor.yy42 = NULL;
-  if (yymsp[0].minor.yy91) yymsp[0].minor.yy91->free(yymsp[0].minor.yy91);
+  if (yymsp[0].minor.yy91) data_type_get_method(yymsp[0].minor.yy91->type)->free(yymsp[0].minor.yy91);
   yymsp[0].minor.yy91 = NULL;
 }
 #line 1134 "./configparser.c"
@@ -1152,7 +1152,7 @@ static void yy_reduce(
     array_insert_unique(yygotominor.yy42, yymsp[0].minor.yy91);
     yymsp[0].minor.yy91 = NULL;
   }
-  if (yymsp[0].minor.yy91) yymsp[0].minor.yy91->free(yymsp[0].minor.yy91);
+  if (yymsp[0].minor.yy91) data_type_get_method(yymsp[0].minor.yy91->type)->free(yymsp[0].minor.yy91);
   yymsp[0].minor.yy91 = NULL;
 }
 #line 1158 "./configparser.c"
@@ -1175,7 +1175,7 @@ static void yy_reduce(
     yygotominor.yy91 = yymsp[0].minor.yy91;
     yymsp[0].minor.yy91 = NULL;
   }
-  if (yymsp[0].minor.yy91) yymsp[0].minor.yy91->free(yymsp[0].minor.yy91);
+  if (yymsp[0].minor.yy91) data_type_get_method(yymsp[0].minor.yy91->type)->free(yymsp[0].minor.yy91);
   yymsp[0].minor.yy91 = NULL;
   buffer_free(yymsp[-2].minor.yy29);
   yymsp[-2].minor.yy29 = NULL;
@@ -1289,7 +1289,7 @@ static void yy_reduce(
     } else {
       fprintf(stderr, "unreachable else condition\n");
       ctx->ok = 0;
-      yymsp[0].minor.yy18->free((data_unset *)yymsp[0].minor.yy18);
+      data_type_get_method(yymsp[0].minor.yy18->type)->free((data_unset *)yymsp[0].minor.yy18);
       yymsp[0].minor.yy18 = dc;
     }
 
@@ -1565,7 +1565,7 @@ static void yy_reduce(
       if (ctx->ok) {
         configparser_push(ctx, dc, 1);
       } else {
-        dc->free((data_unset*) dc);
+        data_type_get_method(dc->type)->free((data_unset*) dc);
       }
     }
   }
@@ -1576,7 +1576,7 @@ static void yy_reduce(
   yymsp[-5].minor.yy0 = NULL;
   buffer_free(yymsp[-3].minor.yy29);
   yymsp[-3].minor.yy29 = NULL;
-  if (yymsp[0].minor.yy91) yymsp[0].minor.yy91->free(yymsp[0].minor.yy91);
+  if (yymsp[0].minor.yy91) data_type_get_method(yymsp[0].minor.yy91->type)->free(yymsp[0].minor.yy91);
   yymsp[0].minor.yy91 = NULL;
 }
 #line 1582 "./configparser.c"
@@ -1646,7 +1646,7 @@ static void yy_reduce(
       ctx->ok = 0;
     }
   }
-  if (yymsp[0].minor.yy91) yymsp[0].minor.yy91->free(yymsp[0].minor.yy91);
+  if (yymsp[0].minor.yy91) data_type_get_method(yymsp[0].minor.yy91->type)->free(yymsp[0].minor.yy91);
   yymsp[0].minor.yy91 = NULL;
 }
 #line 1652 "./configparser.c"

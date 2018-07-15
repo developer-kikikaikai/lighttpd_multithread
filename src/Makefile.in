@@ -812,9 +812,10 @@ am_test_buffer_OBJECTS = test_buffer.$(OBJEXT) buffer.$(OBJEXT)
 test_buffer_OBJECTS = $(am_test_buffer_OBJECTS)
 test_buffer_DEPENDENCIES = $(am__DEPENDENCIES_1)
 am_test_configfile_OBJECTS = test_configfile.$(OBJEXT) \
-	buffer.$(OBJEXT) array.$(OBJEXT) data_string.$(OBJEXT) \
-	keyvalue.$(OBJEXT) vector.$(OBJEXT) log.$(OBJEXT) \
-	sock_addr.$(OBJEXT)
+	buffer.$(OBJEXT) array.$(OBJEXT) data_integer.$(OBJEXT) \
+	data_config.$(OBJEXT) data_array.$(OBJEXT) \
+	data_string.$(OBJEXT) keyvalue.$(OBJEXT) vector.$(OBJEXT) \
+	log.$(OBJEXT) sock_addr.$(OBJEXT)
 test_configfile_OBJECTS = $(am_test_configfile_OBJECTS)
 test_configfile_DEPENDENCIES = $(am__DEPENDENCIES_1) \
 	$(am__DEPENDENCIES_1)
@@ -1413,7 +1414,7 @@ test_buffer_SOURCES = test_buffer.c buffer.c
 test_buffer_LDADD = $(LIBUNWIND_LIBS)
 test_base64_SOURCES = test_base64.c base64.c buffer.c
 test_base64_LDADD = $(LIBUNWIND_LIBS)
-test_configfile_SOURCES = test_configfile.c buffer.c array.c data_string.c keyvalue.c vector.c log.c sock_addr.c
+test_configfile_SOURCES = test_configfile.c buffer.c array.c data_integer.c data_config.c data_array.c data_string.c keyvalue.c vector.c log.c sock_addr.c
 test_configfile_LDADD = $(PCRE_LIB) $(LIBUNWIND_LIBS)
 noinst_HEADERS = $(hdr)
 EXTRA_DIST = \
@@ -1731,6 +1732,9 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/array.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/base64.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/buffer.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/data_array.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/data_config.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/data_integer.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/data_string.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/keyvalue.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/liblightcomp_la-algo_sha1.Plo@am__quote@

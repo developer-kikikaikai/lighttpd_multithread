@@ -223,6 +223,7 @@ static int daemonize(void) {
 
 static EventTPoolManager server_threadpool_init(void) {
 	//thread value will get from conf
+	event_tpool_set_stack_size(4*1024*1024);
 	return event_tpool_manager_new(-1, 1);
 }
 
@@ -319,7 +320,6 @@ static void server_free(server *srv) {
 	CLEAN(srvconf.bindhost);
 	CLEAN(srvconf.event_handler);
 	CLEAN(srvconf.pid_file);
-//	Commant out by closing bug
 	CLEAN(srvconf.modules_dir);
 	CLEAN(srvconf.network_backend);
 	CLEAN(srvconf.xattr_name);
@@ -375,6 +375,8 @@ static void server_free(server *srv) {
 	li_rand_cleanup();
 
 	free(srv);
+
+	data_type_unregister_all();
 }
 
 static void remove_pid_file(server *srv) {
@@ -959,6 +961,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 #endif
 
 	srv->tid = pthread_self();
+	data_type_register_all();
 
 	/* initialize globals (including file-scoped static globals) */
 	oneshot_fd = 0;
@@ -1027,7 +1030,7 @@ static int server_main (server * const srv, int argc, char **argv) {
 	if (print_config) {
 		data_unset *dc = srv->config_context->data[0];
 		if (dc) {
-			dc->print(dc, 0);
+			data_type_get_method(dc->type)->print(dc, 0);
 			fprintf(stdout, "\n");
 		} else {
 			/* shouldn't happend */

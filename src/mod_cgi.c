@@ -614,7 +614,7 @@ static void cgi_start_server_command(plugin_data *p, size_t index) {
 	if(pid != 0) {
 		usleep(100000);
 	} else {
-		(void)chdir(p->cgipath); 
+		chdir(p->cgipath); 
 		char *args[]={
 			CGI_CMD_SERVER,
 			p->usock_info[index].idname,

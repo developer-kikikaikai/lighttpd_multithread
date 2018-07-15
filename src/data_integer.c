@@ -17,11 +17,7 @@ static data_unset *data_integer_copy(const data_unset *s) {
 }
 
 static void data_integer_free(data_unset *d) {
-	data_integer *ds = (data_integer *)d;
-
-	buffer_free(ds->key);
-
-	free(d);
+	data_type_free(TYPE_INTEGER, d);
 }
 
 static void data_integer_reset(data_unset *d) {
@@ -35,7 +31,7 @@ static void data_integer_reset(data_unset *d) {
 static int data_integer_insert_dup(data_unset *dst, data_unset *src) {
 	UNUSED(dst);
 
-	src->free(src);
+	data_type_get_method(src->type)->free(src);
 
 	return 0;
 }
@@ -47,22 +43,37 @@ static void data_integer_print(const data_unset *d, int depth) {
 	fprintf(stdout, "%d", ds->value);
 }
 
+static void data_integer_clone_free(void *d) {
+	data_integer *ds = (data_integer *)d;
 
-data_integer *data_integer_init(void) {
-	data_integer *ds;
+	buffer_free(ds->key);
 
-	ds = calloc(1, sizeof(*ds));
+	free(d);
+}
+
+static void * data_integer_clone(void *base, size_t base_len) {
+	UNUSED(base);
+	data_integer *ds = calloc(1, base_len);
 	force_assert(NULL != ds);
 
+	ds->type = TYPE_INTEGER;
 	ds->key = buffer_init();
 	ds->value = 0;
-
-	ds->copy = data_integer_copy;
-	ds->free = data_integer_free;
-	ds->reset = data_integer_reset;
-	ds->insert_dup = data_integer_insert_dup;
-	ds->print = data_integer_print;
-	ds->type = TYPE_INTEGER;
-
 	return ds;
+}
+
+void data_integer_get_register(data_unset_register_data_t *data) {
+	data->prime.copy = data_integer_copy;
+	data->prime.free = data_integer_free;
+	data->prime.reset = data_integer_reset;
+	data->prime.insert_dup = data_integer_insert_dup;
+	data->prime.print = data_integer_print;
+
+	data->prime.type = TYPE_INTEGER;
+	data->clone = data_integer_clone;
+	data->free = data_integer_clone_free;
+}
+
+data_integer *data_integer_init(void) {
+	return (data_integer *)data_type_get(TYPE_INTEGER);
 }

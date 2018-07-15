@@ -68,7 +68,7 @@ static inline int connection_fdevent2tpoolevent(int eventflag) {
 	return ret_eveflag;
 }
 
-#define CON_MAX_EVENTFD (32)
+#define CON_MAX_EVENTFD (32*100)
 #define CON_EVENTFD_SIZE (sizeof(connection_event_handler_t)+ sizeof(event_subscriber_t))
 static int connection_handle_close_state(server *srv, connection *con);
 static int connection_handle_response_end_state(server *srv, connection *con);
