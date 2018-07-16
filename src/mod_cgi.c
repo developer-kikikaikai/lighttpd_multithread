@@ -25,6 +25,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <pthread.h>
+#include <spawn.h>
 
 #define CGI_CMD_SERVER CGI_COMMAND_SERVICE_PATH"/CommandServer.py"
 #define CGI_CMD_CLIENT CGI_COMMAND_SERVICE_PATH"/CommandClient.py"
@@ -35,6 +36,7 @@
 #define USOCK_LEN (16)
 #define ENV_STRING (1024)
 
+#define FORK_STACKSIZE (128 * 1024)
 typedef struct {
 	char **ptr;
 
@@ -51,6 +53,7 @@ typedef struct {
 typedef struct {
 	pthread_t tid;
 	char idname[10];
+	int pid;
 } cgi_usock_info_t;
 
 typedef struct {
@@ -94,8 +97,15 @@ typedef struct {
 	plugin_config conf;
 } handler_ctx;
 
+typedef struct {
+	char **args;
+	char *cgidir;
+} cgi_command_fnc_t;
+
+static int cgi_call_cmd(cgi_command_fnc_t *args);
+static void cgi_call_cmd_and_wait(cgi_command_fnc_t *args);
 static void cgi_send_command(handler_ctx *hctx);
-static void cgi_start_server_command(plugin_data *p, size_t index);
+static int cgi_start_server_command(plugin_data *p, size_t index);
 static void cgi_stop_server_command(plugin_data *p, size_t index);
 static size_t mod_cgi_find_usock_info(plugin_data *p, pthread_t tid);
 
@@ -588,57 +598,57 @@ static void cgi_open_resp_sock(handler_ctx *hctx) {
 	}
 	hctx->fd = fd;
 	/*set non block*/
-	fcntl(fd, F_SETFL, O_NONBLOCK | O_RDWR);
+	fcntl(fd, F_SETFL, O_NONBLOCK | O_RDWR | FD_CLOEXEC);
+}
+
+static int cgi_call_cmd(cgi_command_fnc_t *args) {
+	int pid;
+	if(args->cgidir)chdir(args->cgidir); 
+	(void)posix_spawn( &pid, args->args[0], NULL, NULL, args->args, NULL );
+	return pid;
+}
+
+static void cgi_call_cmd_and_wait(cgi_command_fnc_t *args) {
+	int pid = cgi_call_cmd(args);
+	waitpid(pid, NULL, 0);
 }
 
 static void cgi_send_command(handler_ctx *hctx) {
 	size_t i = mod_cgi_find_usock_info(hctx->plugin_data, pthread_self());
-	int pid = fork();
-	if(pid != 0) {
-		int status;
-		waitpid(pid, &status, 0);
-	} else {
-		char *args[]={
-			CGI_CMD_CLIENT,/*CommandClient command*/
-			hctx->basecmd,/*cgi shell command*/
-			hctx->env_string,/*environment string*/
-			hctx->body_file,/*body data file*/
-			hctx->usock_name,/*response socket name*/
-			hctx->plugin_data->usock_info[i].idname,/*server id*/
-			NULL
-		};
-		execv(args[0], args);
-	}
+	char *args[]={
+		CGI_CMD_CLIENT,/*CommandClient command*/
+		hctx->basecmd,/*cgi shell command*/
+		hctx->env_string,/*environment string*/
+		hctx->body_file,/*body data file*/
+		hctx->usock_name,/*response socket name*/
+		hctx->plugin_data->usock_info[i].idname,/*server id*/
+		NULL
+	};
+	cgi_command_fnc_t cmd_args={args, NULL};
+	cgi_call_cmd_and_wait(&cmd_args);
 }
 
-static void cgi_start_server_command(plugin_data *p, size_t index) {
-	int pid = fork();
-	if(pid != 0) {
-		usleep(100000);
-	} else {
-		chdir(p->cgipath); 
-		char *args[]={
-			CGI_CMD_SERVER,
-			p->usock_info[index].idname,
-			NULL
-		};
-		execv(args[0], args);
-	}
+static int cgi_start_server_command(plugin_data *p, size_t index) {
+	char *args[]={
+		CGI_CMD_SERVER,
+		p->usock_info[index].idname,
+		NULL
+	};
+	cgi_command_fnc_t cmd_args={args, p->cgipath};
+	int pid = cgi_call_cmd(&cmd_args);
+	usleep(100000);
+	return pid;
 }
 
 static void cgi_stop_server_command(plugin_data *p, size_t index){
-	int pid = fork();
-	if(pid != 0) {
-		int status;
-		waitpid(pid, &status, 0);
-	} else {
-		char *args[]={
-			CGI_CMD_CLIENT,
-			p->usock_info[index].idname,
-			NULL
-		};
-		execv(args[0], args);
-	}
+	char *args[]={
+		CGI_CMD_CLIENT,
+		p->usock_info[index].idname,
+		NULL
+	};
+	cgi_command_fnc_t cmd_args={args, NULL};
+	cgi_call_cmd_and_wait(&cmd_args);
+	waitpid(p->usock_info[index].pid, NULL, 0);
 }
 
 static int cgi_create_env(server *srv, connection *con, plugin_data *p, handler_ctx *hctx, buffer *cgi_handler) {
@@ -815,7 +825,7 @@ URIHANDLER_FUNC(cgi_is_handled) {
 			p->usock_info[i].tid = tid;
 			/*start server*/
 			snprintf(p->usock_info[i].idname, sizeof(p->usock_info[i].idname), "%09x", (unsigned int)(tid));
-			cgi_start_server_command(p, i);
+			p->usock_info[i].pid = cgi_start_server_command(p, i);
 			p->usock_num++;
 		}
 		CGI_UNLOCK(p)

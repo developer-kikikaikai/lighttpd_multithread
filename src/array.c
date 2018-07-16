@@ -421,6 +421,7 @@ static struct {
 } data_type_mng_g;
 
 static void prototype_default_free_base(void * base) {
+	UNUSED(base);
 }
 
 void data_type_get_register(int type, data_unset_register_data_t *data) {
