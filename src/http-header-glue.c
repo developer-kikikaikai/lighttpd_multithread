@@ -22,7 +22,6 @@
 #include <unistd.h>
 #include <pthread.h>
 
-
 int response_header_insert(server *srv, connection *con, const char *key, size_t keylen, const char *value, size_t vallen) {
 	data_string *ds;
 
@@ -54,6 +53,17 @@ int response_header_overwrite(server *srv, connection *con, const char *key, siz
 	return response_header_insert(srv, con, key, keylen, value, vallen);
 }
 
+void response_header_fixed_overwrite(server *srv, connection *con, http_response_fixed_type_e header_type) {
+	fprintf(stderr, "%s\n", __func__);
+	UNUSED(srv);
+	data_fixed_header data_header;
+	data_header.header_type = header_type;
+	/*This is really data_fixed_header*/
+	data_unset *ds = data_type_get_method(TYPE_FIXED_HEADER)->copy((data_unset *)&data_header);
+
+	array_insert_unique(con->response.headers, ds);
+}
+
 int response_header_append(server *srv, connection *con, const char *key, size_t keylen, const char *value, size_t vallen) {
 	data_string *ds;
 
@@ -67,6 +77,21 @@ int response_header_append(server *srv, connection *con, const char *key, size_t
 	}
 
 	return response_header_insert(srv, con, key, keylen, value, vallen);
+}
+
+void response_header_fixed_append(server *srv, connection *con, const char *key, size_t keylen, const char *value, size_t vallen, http_response_fixed_type_e header_type) {
+	data_string *ds;
+
+	UNUSED(srv);
+
+	/* if there already is a key by this name append the value */
+	if (NULL != (ds = (data_string *)array_get_element_klen(con->response.headers, key, keylen))) {
+		buffer_append_string_len(ds->value, CONST_STR_LEN(", "));
+		buffer_append_string_len(ds->value, value, vallen);
+		return;
+	}
+
+	response_header_fixed_overwrite(srv, con, header_type);
 }
 
 int http_response_redirect_to_directory(server *srv, connection *con) {
@@ -1030,6 +1055,7 @@ static int http_response_process_headers(server *srv, connection *con, http_resp
             }
             break;
         case 10:
+		fprintf(stderr, "usoyaaann!\n");
             if (0 == strncasecmp(key, "Connection", key_len)) {
                 if (opts->backend == BACKEND_PROXY) continue;
                 con->response.keep_alive =

@@ -444,6 +444,7 @@ void data_type_register_all(void) {
 		NULL,
 		data_string_get_register,
 		data_response_get_register,
+		data_fixed_header_get_register,
 		NULL,
 		data_array_get_register,
 		data_integer_get_register,
@@ -483,6 +484,8 @@ data_unset_prime * data_type_get_method(int type) {
 void data_type_unregister_all(void) {
 	flyweight_factory_free(data_type_mng_g.prime_factory);
 	prototype_manager_free(data_type_mng_g.proto_manager);
+	/*finalize instance into data_fixed_header*/
+	data_fixed_header_exit();
 }
 
 #ifdef DEBUG_ARRAY

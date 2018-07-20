@@ -11,7 +11,7 @@
 
 #include <stdlib.h>
 
-typedef enum { TYPE_UNSET, TYPE_STRING, TYPE_RESPONSE, TYPE_AUTH, TYPE_ARRAY, TYPE_INTEGER, TYPE_CONFIG, TYPE_SIZEOF } data_type_t;
+typedef enum { TYPE_UNSET, TYPE_STRING, TYPE_RESPONSE, TYPE_FIXED_HEADER, TYPE_AUTH, TYPE_ARRAY, TYPE_INTEGER, TYPE_CONFIG, TYPE_SIZEOF } data_type_t;
 #define DATA_UNSET_PRIME \
 	data_type_t type; \
 	struct data_unset *(*copy)(const struct data_unset *src); \
@@ -53,6 +53,23 @@ typedef struct {
 
 data_string *data_string_init(void);
 data_string *data_response_init(void);
+void data_response_exit(void);
+
+typedef enum {
+	RESP_FIXED_HEADER_CONNECTION_CLOSE,
+	RESP_FIXED_HEADER_CONNECTION_KEEPALIVE,
+	RESP_FIXED_HEADER_CONNECTION_UPGRAGE,
+	RESP_FIXED_HEADER_TRANSFER_ENCODING_CHUNKED,
+} http_response_fixed_type_e;
+
+typedef struct {
+	DATA_UNSET;
+
+	buffer *value;
+	http_response_fixed_type_e header_type;
+} data_fixed_header;
+
+//Don't neet data_fixed_header_init because data_fixed_header always use static value
 
 typedef struct {
 	DATA_UNSET;
@@ -174,6 +191,7 @@ typedef struct {
 void data_type_get_register(int type, data_unset_register_data_t *data);
 void data_string_get_register(data_unset_register_data_t *data);
 void data_response_get_register(data_unset_register_data_t *data);
+void data_fixed_header_get_register(data_unset_register_data_t *data);
 void data_array_get_register(data_unset_register_data_t *data);
 void data_integer_get_register(data_unset_register_data_t *data);
 void data_config_get_register(data_unset_register_data_t *data);
@@ -183,4 +201,5 @@ data_unset_prime * data_type_get_method(int type);
 void data_type_free(int type, data_unset * cloned_data);
 void data_type_unregister_all(void);
 
+void data_fixed_header_exit(void);
 #endif

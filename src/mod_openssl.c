@@ -1646,6 +1646,7 @@ CONNECTION_FUNC(mod_openssl_handle_con_close)
 static void
 https_add_ssl_client_entries (server *srv, connection *con, handler_ctx *hctx)
 {
+    UNUSED(srv);
     X509 *xs;
     X509_NAME *xn;
     int i, nentries;

@@ -6,10 +6,12 @@
 #include "log.h"
 #include "stat_cache.h"
 #include "chunk.h"
+#include "response.h"
 
 #include "configfile.h"
 
 #include "plugin.h"
+#include "array.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -20,6 +22,41 @@
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
+
+//
+#define CONNECTION_KEY "Connection"
+#define CONNECTION_CLOSED "close"
+#define CONNECTION_KEEP_ALIVE "keep-alive"
+#define CONNECTION_UPGRADE "upgrade"
+
+#define TRANSFER_ENCODINF_KEY "Transfer-Encoding"
+#define TRANSFER_ENCODINF_CHNKED "chunked"
+
+/*Please keep key 1st*/
+static void http_response_fixed_header_register_once(http_response_fixed_type_e type, char * header_key, const char * header_value) {
+	data_fixed_header header={0};
+	header.header_type = type;
+	data_fixed_header * header_in_flyweignt = (data_fixed_header *)data_type_get_method(TYPE_FIXED_HEADER)->copy((data_unset *)&header);
+	buffer_copy_string(header_in_flyweignt->key, header_key);
+	buffer_copy_string(header_in_flyweignt->value, header_value);
+	
+}
+
+void http_response_fixed_header_register(void) {
+	/*create data_fixed_header_init base data, for connection*/
+	/*fixed header for connection*/
+	http_response_fixed_header_register_once(RESP_FIXED_HEADER_CONNECTION_CLOSE, CONNECTION_KEY, CONNECTION_CLOSED);
+	http_response_fixed_header_register_once(RESP_FIXED_HEADER_CONNECTION_KEEPALIVE, CONNECTION_KEY, CONNECTION_KEEP_ALIVE);
+	http_response_fixed_header_register_once(RESP_FIXED_HEADER_CONNECTION_UPGRAGE, CONNECTION_KEY, CONNECTION_UPGRADE);
+
+	/*transfer-encoding */
+	http_response_fixed_header_register_once(RESP_FIXED_HEADER_TRANSFER_ENCODING_CHUNKED, TRANSFER_ENCODINF_KEY, TRANSFER_ENCODINF_CHNKED);
+	
+}
+
+void http_response_fixed_header_unregister(void) {
+	data_fixed_header_exit();
+}
 
 int http_response_write_header(server *srv, connection *con) {
 	buffer *b;
@@ -46,11 +83,11 @@ int http_response_write_header(server *srv, connection *con) {
 	}
 
 	if ((con->parsed_response & HTTP_UPGRADE) && con->request.http_version == HTTP_VERSION_1_1) {
-		response_header_overwrite(srv, con, CONST_STR_LEN("Connection"), CONST_STR_LEN("upgrade"));
+		response_header_fixed_overwrite(srv, con, RESP_FIXED_HEADER_CONNECTION_UPGRAGE);
 	} else if (0 == con->keep_alive) {
-		response_header_overwrite(srv, con, CONST_STR_LEN("Connection"), CONST_STR_LEN("close"));
+		response_header_fixed_overwrite(srv, con, RESP_FIXED_HEADER_CONNECTION_CLOSE);
 	} else if (con->request.http_version == HTTP_VERSION_1_0) {/*(&& con->keep_alive != 0)*/
-		response_header_overwrite(srv, con, CONST_STR_LEN("Connection"), CONST_STR_LEN("keep-alive"));
+		response_header_fixed_overwrite(srv, con, RESP_FIXED_HEADER_CONNECTION_KEEPALIVE);
 	}
 
 	/* add all headers */

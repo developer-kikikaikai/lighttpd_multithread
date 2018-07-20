@@ -3,6 +3,7 @@
 #include "first.h"
 
 #include "server.h"
+#include "array.h"
 
 #include <time.h>
 
@@ -10,8 +11,10 @@ int http_response_parse(server *srv, connection *con);
 int http_response_write_header(server *srv, connection *con);
 
 int response_header_insert(server *srv, connection *con, const char *key, size_t keylen, const char *value, size_t vallen);
+void response_header_fixed_insert(server *srv, connection *con, http_response_fixed_type_e header_type);
 int response_header_overwrite(server *srv, connection *con, const char *key, size_t keylen, const char *value, size_t vallen);
 int response_header_append(server *srv, connection *con, const char *key, size_t keylen, const char *value, size_t vallen);
+void response_header_fixed_append(server *srv, connection *con, const char *key, size_t keylen, const char *value, size_t vallen, http_response_fixed_type_e header_type);
 
 typedef struct http_cgi_opts_t {
   int authorizer;
@@ -56,5 +59,10 @@ void http_response_upgrade_read_body_unknown(server *srv, connection *con);
 buffer * strftime_cache_get(server *srv, time_t last_mod);
 void strftime_cache_init(void);
 void strftime_cache_exit(void);
+
+/*initialize header to remove extra copy*/
+void http_response_fixed_header_register(void);
+void response_header_fixed_overwrite(server *srv, connection *con, http_response_fixed_type_e header_type);
+void http_response_fixed_header_unregister(void);
 
 #endif

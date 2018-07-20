@@ -531,7 +531,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 					chunkqueue_prepend_buffer(con->write_queue, b);
 					chunkqueue_append_mem(con->write_queue, CONST_STR_LEN("\r\n"));
 				}
-				response_header_append(srv, con, CONST_STR_LEN("Transfer-Encoding"), CONST_STR_LEN("chunked"));
+				response_header_fixed_append(srv, con, CONST_STR_LEN("Transfer-Encoding"), CONST_STR_LEN("chunked"), RESP_FIXED_HEADER_TRANSFER_ENCODING_CHUNKED);
 			} else {
 				con->keep_alive = 0;
 			}

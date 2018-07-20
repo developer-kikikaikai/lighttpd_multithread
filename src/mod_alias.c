@@ -108,6 +108,7 @@ SETDEFAULTS_FUNC(mod_alias_set_defaults) {
 }
 
 PHYSICALPATH_FUNC(mod_alias_physical_handler) {
+	UNUSED(srv);
 	plugin_data *p = p_d;
 	int uri_len, basedir_len;
 	char *uri_ptr;

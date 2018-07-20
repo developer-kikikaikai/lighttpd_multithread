@@ -98,6 +98,8 @@ static volatile sig_atomic_t handle_sig_hup = 0;
 #if defined(HAVE_SIGACTION) && defined(SA_SIGINFO)
 static volatile siginfo_t last_sigterm_info;
 static volatile siginfo_t last_sighup_info;
+static void server_fixed_memory_register(void);
+static void server_fixed_memory_unregister(void);
 
 static void sigaction_handler(int sig, siginfo_t *si, void *context) {
 	static const siginfo_t empty_siginfo;
@@ -224,7 +226,7 @@ static int daemonize(void) {
 static EventTPoolManager server_threadpool_init(void) {
 	//thread value will get from conf
 	event_tpool_set_stack_size(4*1024*1024);
-	return event_tpool_manager_new(-1, 1);
+	return event_tpool_manager_new(-1, 1, "/usr/local/lib/libevent_if_libev.so");
 }
 
 static server *server_init(void) {
@@ -376,7 +378,7 @@ static void server_free(server *srv) {
 
 	free(srv);
 
-	data_type_unregister_all();
+	server_fixed_memory_unregister();
 }
 
 static void remove_pid_file(server *srv) {
@@ -937,6 +939,16 @@ static void server_graceful_state (server *srv) {
     }
 }
 
+static void server_fixed_memory_register(void) {
+	data_type_register_all();
+	http_response_fixed_header_register();
+}
+
+static void server_fixed_memory_unregister(void) {
+	http_response_fixed_header_unregister();
+	data_type_unregister_all();
+}
+
 static int server_main (server * const srv, int argc, char **argv) {
 	int print_config = 0;
 	int test_config = 0;
@@ -961,7 +973,8 @@ static int server_main (server * const srv, int argc, char **argv) {
 #endif
 
 	srv->tid = pthread_self();
-	data_type_register_all();
+
+	server_fixed_memory_register();
 
 	/* initialize globals (including file-scoped static globals) */
 	oneshot_fd = 0;
