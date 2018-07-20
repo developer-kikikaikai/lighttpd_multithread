@@ -30,7 +30,7 @@ int response_header_insert(server *srv, connection *con, const char *key, size_t
 	if (NULL == (ds = (data_string *)array_get_unused_element(con->response.headers, TYPE_STRING))) {
 		ds = data_response_init();
 	}
-	buffer_copy_string_len(ds->key, key, keylen);
+	buffer_copy_string_len_reuse(&ds->key, key, keylen);
 	buffer_copy_string_len(ds->value, value, vallen);
 
 	array_insert_unique(con->response.headers, (data_unset *)ds);
@@ -54,7 +54,6 @@ int response_header_overwrite(server *srv, connection *con, const char *key, siz
 }
 
 void response_header_fixed_overwrite(server *srv, connection *con, http_response_fixed_type_e header_type) {
-	fprintf(stderr, "%s\n", __func__);
 	UNUSED(srv);
 	data_fixed_header data_header;
 	data_header.header_type = header_type;
@@ -550,7 +549,7 @@ void http_response_send_file (server *srv, connection *con, buffer *path) {
 	}
 
 	if (con->conf.range_requests) {
-		response_header_overwrite(srv, con, CONST_STR_LEN("Accept-Ranges"), CONST_STR_LEN("bytes"));
+		response_header_fixed_overwrite(srv, con, RESP_FIXED_HEADER_ACCEPT_RANGES_BYTES);
 	}
 
 	if (allow_caching) {

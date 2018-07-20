@@ -35,6 +35,7 @@ typedef struct {
 
 /* create new buffer; either empty or copy given data */
 buffer* buffer_init(void);
+void buffer_exit(void);
 buffer* buffer_init_buffer(const buffer *src); /* src can  be NULL */
 buffer* buffer_init_string(const char *str); /* str can  be NULL */
 
@@ -76,6 +77,7 @@ void buffer_string_set_length(buffer *b, size_t len);
 
 void buffer_copy_string(buffer *b, const char *s);
 void buffer_copy_string_len(buffer *b, const char *s, size_t s_len);
+void buffer_copy_string_len_reuse(buffer **b, const char *s, size_t s_len);
 void buffer_copy_buffer(buffer *b, const buffer *src);
 /* convert input to hex and store in buffer */
 void buffer_copy_string_hex(buffer *b, const char *in, size_t in_len);

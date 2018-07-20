@@ -1,6 +1,7 @@
 #include "first.h"
 
 #include "buffer.h"
+#include "flyweight.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -172,6 +173,46 @@ void buffer_commit(buffer *b, size_t size)
 
 void buffer_copy_string(buffer *b, const char *s) {
 	buffer_copy_string_len(b, s, NULL != s ? strlen(s) : 0);
+}
+
+/*for header method*/
+typedef struct buffer_constructor_t{
+	const char *s;
+	size_t s_len;
+} buffer_constructor_t;
+
+static void buffer_copy_constructor(void *this, size_t size, void *input_parameter) {
+	UNUSED(size);
+	buffer **b = (buffer **)this;
+	*b = buffer_init();
+	buffer_constructor_t * inparam = (buffer_constructor_t *) input_parameter;
+	buffer_copy_string_len(*b, inparam->s,  inparam->s_len);
+}
+
+static int buffer_copy_equall_operand(void *this, size_t size, void *input_parameter) {
+	UNUSED(size);
+	buffer *src= *((buffer **)this);
+	buffer *dist=(buffer *)input_parameter;
+	return (strcmp((char *)src->ptr, (char *)dist->ptr)==0);
+}
+
+static void buffer_copy_destructor(void *this) {
+	buffer **b = (buffer **)this;
+	buffer_free(*b);
+}
+
+/*for header type*/
+static FlyweightFactory buf_factory;
+void buffer_copy_string_len_reuse(buffer **b, const char *s, size_t s_len) {
+	buffer_constructor_t param={s, s_len};
+	static flyweight_methods_t method = {buffer_copy_constructor, buffer_copy_equall_operand, NULL, buffer_copy_destructor};
+	if(!buf_factory) buf_factory = flyweight_factory_new(sizeof(buffer**), 0, &method);
+	buffer ** buf = (buffer **)flyweight_get(buf_factory, &param);
+	*b = *buf;
+}
+
+void buffer_exit(void) {
+	flyweight_factory_free(buf_factory);
 }
 
 void buffer_copy_string_len(buffer *b, const char *s, size_t s_len) {

@@ -7,6 +7,13 @@
 
 #include <time.h>
 
+typedef enum {
+	RESP_CONTENT_TYPE,
+	RESP_CONTENT_LENGTH,
+	RESP_ACCEPT_RANGES,
+	
+} http_response_header_type_e;
+
 int http_response_parse(server *srv, connection *con);
 int http_response_write_header(server *srv, connection *con);
 

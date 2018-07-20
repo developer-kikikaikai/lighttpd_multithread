@@ -20,50 +20,28 @@ static flyweight_methods_t resp_factory_method = {
 	data_fixed_header_destructor
 };
 
-static void data_string_deepcopy(data_string *src, data_string *ds) {
-	buffer_copy_buffer(ds->key, src->key);
+static void data_response_deepcopy(data_string *src, data_string *ds) {
 	buffer_copy_buffer(ds->value, src->value);
 	ds->is_index_key = src->is_index_key;
 }
 
-static data_unset *data_string_copy(const data_unset *s) {
+static data_unset *data_response_copy(const data_unset *s) {
 	data_string *src = (data_string *)s;
-	data_string *ds = data_string_init();
+	data_string *ds = data_response_init();
 
-	data_string_deepcopy(src, ds);
+	data_response_deepcopy(src, ds);
 	return (data_unset *)ds;
 }
 
-static void data_string_free(data_unset *d) {
-	data_type_free(TYPE_STRING, d);
+static void data_response_free(data_unset *d) {
+	data_type_free(TYPE_RESPONSE, d);
 }
 
-static void data_string_unfree(data_unset *d) {
-	UNUSED(d);
-}
-
-static void data_string_reset(data_unset *d) {
+static void data_response_reset(data_unset *d) {
 	data_string *ds = (data_string *)d;
 
 	/* reused array elements */
-	buffer_reset(ds->key);
 	buffer_reset(ds->value);
-}
-
-static int data_string_insert_dup(data_unset *dst, data_unset *src) {
-	data_string *ds_dst = (data_string *)dst;
-	data_string *ds_src = (data_string *)src;
-
-	if (!buffer_is_empty(ds_dst->value)) {
-		buffer_append_string_len(ds_dst->value, CONST_STR_LEN(", "));
-		buffer_append_string_buffer(ds_dst->value, ds_src->value);
-	} else {
-		buffer_copy_buffer(ds_dst->value, ds_src->value);
-	}
-
-	data_type_get_method(src->type)->free(src);
-
-	return 0;
 }
 
 static int data_response_insert_dup(data_unset *dst, data_unset *src) {
@@ -109,25 +87,88 @@ static void data_string_print(const data_unset *d, int depth) {
 	putc('"', stdout);
 }
 
-static void * data_string_clone(void *base, size_t base_len) {
-	UNUSED(base);
-	data_string *ds = calloc(1, base_len);
-	force_assert(NULL != ds);
-
-	ds->type = TYPE_STRING;
-	ds->key = buffer_init();
-	ds->value = buffer_init();
-	return ds;
-}
-
 static void * data_response_clone(void *base, size_t base_len) {
 	UNUSED(base);
 	data_string *ds = calloc(1, base_len);
 	force_assert(NULL != ds);
 
 	ds->type = TYPE_RESPONSE;
-	ds->key = buffer_init();
 	ds->value = buffer_init();
+	return ds;
+}
+
+static void data_response_clone_free(void *d) {
+	data_string *ds = (data_string *)d;
+
+	buffer_free(ds->value);
+
+	free(d);
+}
+
+void data_response_get_register(data_unset_register_data_t *data) {
+	data->prime.copy = data_response_copy;
+	data->prime.free = data_response_free;
+	data->prime.reset = data_response_reset;
+	data->prime.insert_dup = data_response_insert_dup;
+	data->prime.print = data_string_print;
+	data->prime.type = TYPE_RESPONSE;
+
+	data->clone = data_response_clone;
+	data->free = data_response_clone_free;
+}
+
+static void data_string_deepcopy(data_string *src, data_string *ds) {
+	buffer_copy_buffer(ds->key, src->key);
+	data_response_deepcopy(src, ds);
+}
+
+static data_unset *data_string_copy(const data_unset *s) {
+	data_string *src = (data_string *)s;
+	data_string *ds = data_string_init();
+
+	data_string_deepcopy(src, ds);
+	return (data_unset *)ds;
+}
+
+static void data_string_free(data_unset *d) {
+	data_type_free(TYPE_STRING, d);
+}
+
+static void data_string_unfree(data_unset *d) {
+	UNUSED(d);
+}
+
+static void data_string_reset(data_unset *d) {
+	data_string *ds = (data_string *)d;
+
+	/* reused array elements */
+	buffer_reset(ds->key);
+	buffer_reset(ds->value);
+}
+
+static int data_string_insert_dup(data_unset *dst, data_unset *src) {
+	data_string *ds_dst = (data_string *)dst;
+	data_string *ds_src = (data_string *)src;
+
+	if (!buffer_is_empty(ds_dst->value)) {
+		buffer_append_string_len(ds_dst->value, CONST_STR_LEN(", "));
+		buffer_append_string_buffer(ds_dst->value, ds_src->value);
+	} else {
+		buffer_copy_buffer(ds_dst->value, ds_src->value);
+	}
+
+	data_type_get_method(src->type)->free(src);
+
+	return 0;
+}
+
+static void * data_string_clone(void *base, size_t base_len) {
+	UNUSED(base);
+	data_string *ds = data_response_clone(base, base_len);
+	force_assert(NULL != ds);
+
+	ds->type = TYPE_STRING;
+	ds->key = buffer_init();
 	return ds;
 }
 
@@ -135,9 +176,7 @@ static void data_string_clone_free(void *d) {
 	data_string *ds = (data_string *)d;
 
 	buffer_free(ds->key);
-	buffer_free(ds->value);
-
-	free(d);
+	data_response_clone_free(d);
 }
 
 void data_string_get_register(data_unset_register_data_t *data) {
@@ -151,14 +190,6 @@ void data_string_get_register(data_unset_register_data_t *data) {
 	data->size = sizeof(data_string);
 	data->clone = data_string_clone;
 	data->free = data_string_clone_free;
-}
-
-void data_response_get_register(data_unset_register_data_t *data) {
-	data_string_get_register(data);
-	data->prime.insert_dup = data_response_insert_dup;
-	data->prime.type = TYPE_RESPONSE;
-
-	data->clone = data_response_clone;
 }
 
 static void data_fixed_header_constructor(void *this, size_t size, void *input_parameter) {
@@ -218,4 +249,5 @@ data_string *data_response_init(void) {
 
 void data_fixed_header_exit(void) {
 	flyweight_factory_free(resp_factory);
+	buffer_exit();
 }

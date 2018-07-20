@@ -945,7 +945,6 @@ static void server_fixed_memory_register(void) {
 }
 
 static void server_fixed_memory_unregister(void) {
-	http_response_fixed_header_unregister();
 	data_type_unregister_all();
 }
 

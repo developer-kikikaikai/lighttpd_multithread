@@ -32,6 +32,9 @@
 #define TRANSFER_ENCODINF_KEY "Transfer-Encoding"
 #define TRANSFER_ENCODINF_CHNKED "chunked"
 
+#define ACCEPT_RANGES_KEY "Accept-Ranges"
+#define ACCEPT_RANGES_BYTES "bytes"
+
 /*Please keep key 1st*/
 static void http_response_fixed_header_register_once(http_response_fixed_type_e type, char * header_key, const char * header_value) {
 	data_fixed_header header={0};
