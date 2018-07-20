@@ -223,7 +223,7 @@ URIHANDLER_FUNC(mod_usertrack_uri_handler) {
 	if (NULL == (ds = (data_string *)array_get_unused_element(con->response.headers, TYPE_STRING))) {
 		ds = data_response_init();
 	}
-	buffer_copy_string_len(ds->key, CONST_STR_LEN("Set-Cookie"));
+	buffer_copy_string_len_reuse(&ds->key, CONST_STR_LEN("Set-Cookie"));
 	buffer_copy_buffer(ds->value, p->conf.cookie_name);
 	buffer_append_string_len(ds->value, CONST_STR_LEN("="));
 

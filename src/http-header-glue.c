@@ -1054,7 +1054,6 @@ static int http_response_process_headers(server *srv, connection *con, http_resp
             }
             break;
         case 10:
-		fprintf(stderr, "usoyaaann!\n");
             if (0 == strncasecmp(key, "Connection", key_len)) {
                 if (opts->backend == BACKEND_PROXY) continue;
                 con->response.keep_alive =
@@ -1089,7 +1088,7 @@ static int http_response_process_headers(server *srv, connection *con, http_resp
         ds = (data_string *)
           array_get_unused_element(con->response.headers, TYPE_STRING);
         if (NULL == ds) ds = data_response_init();
-        buffer_copy_string_len(ds->key, key, key_len);
+        buffer_copy_string_len_reuse(&ds->key, key, strlen(key));
         buffer_copy_string(ds->value, value);
 
         array_insert_unique(con->response.headers, (data_unset *)ds);
