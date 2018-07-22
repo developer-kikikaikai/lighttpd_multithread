@@ -225,8 +225,8 @@ static int daemonize(void) {
 
 static EventTPoolManager server_threadpool_init(void) {
 	//thread value will get from conf
-	event_tpool_set_stack_size(4*1024*1024);
-	return event_tpool_manager_new(-1, 1, "/usr/local/lib/libevent_if_libev.so");
+	event_tpool_set_stack_size(256*1024);
+	return event_tpool_manager_new(4, 1, "/usr/local/lib/libevent_if_libev.so");
 }
 
 static server *server_init(void) {
