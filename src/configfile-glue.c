@@ -640,30 +640,3 @@ int config_check_cond(server *srv, connection *con, data_config *dc) {
 	}
 	return (config_check_cond_cached(srv, con, dc) == COND_RESULT_TRUE);
 }
-
-int config_patch_config(server *srv, data_config const* dc, config_values_t *cv, config_values_t *cv_tmp, config_scope_type_t scope) {
-
-	int cv_index=0, cv_tmp_index=0;
-	size_t i=0;
-	/* search conf type */
-	for (i = 0; i < dc->value->used; i++) {
-	        data_unset *du = dc->value->data[i];
-
-		for(cv_index=0, cv_tmp_index=0; cv[cv_index].key; cv_index++) {
-			if (buffer_is_equal_string(du->key, cv[cv_index].key, strlen(cv[cv_index].key))) {
-				//add to tmpcv
-				memcpy(&cv_tmp[cv_tmp_index++], &cv[cv_index], sizeof(config_values_t));
-			}
-		}
-		//add NULL
-		cv_tmp[cv_tmp_index]=cv[cv_index];
-
-		//load settings
-		if (0 != config_insert_values_global(srv, dc->value, cv_tmp, scope)) {
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
